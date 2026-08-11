@@ -1,0 +1,1658 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>ECI - கொர்நேலியு ஆண்கள் ஐக்கியம்</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Merriweather:wght@400;700;900&family=Inter:wght@400;500;600;700&family=Noto+Sans+Tamil:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+<!-- Firebase (compat build - simplest for a single static HTML file, no bundler needed) -->
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-storage-compat.js"></script>
+
+<style id="app-styles">
+/* ============ TOKENS ============ */
+:root{
+  --color-primary:#1E3A5F;
+  --color-primary-dark:#12253C;
+  --color-accent:#C9A227;
+  --color-bg:#F5F8FB;
+  --color-surface:#FFFFFF;
+  --color-border:#DCE4EC;
+  --color-text:#1B2733;
+  --color-muted:#647385;
+  --color-danger:#B3261E;
+  --color-success:#1E7A46;
+  --font-display:'Merriweather', serif;
+  --font-body:'Inter', system-ui, sans-serif;
+  --font-tamil:'Noto Sans Tamil','Inter', sans-serif;
+  --radius:10px;
+  --shadow:0 2px 10px rgba(18,37,60,0.08);
+  --shadow-lg:0 12px 32px rgba(18,37,60,0.18);
+}
+
+*{box-sizing:border-box;}
+html,body{margin:0;padding:0;}
+body{
+  font-family:var(--font-body);
+  background:var(--color-bg);
+  color:var(--color-text);
+  -webkit-font-smoothing:antialiased;
+}
+[lang="ta"], .church-title-ta, .ta{ font-family:var(--font-tamil); }
+
+.hidden{display:none !important;}
+.muted{color:var(--color-muted);}
+.small{font-size:0.9rem;}
+.tiny{font-size:0.78rem;}
+.center-text{text-align:center;}
+
+/* ============ LOADING ============ */
+.full-screen-center{
+  min-height:100vh;
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  justify-content:center;
+  padding:24px;
+  background:linear-gradient(180deg, var(--color-primary-dark) 0%, var(--color-primary) 45%, var(--color-bg) 45%);
+}
+.logo-loading{width:72px;height:72px;object-fit:contain;margin-bottom:12px;}
+.spinner{
+  width:32px;height:32px;border-radius:50%;
+  border:3px solid rgba(255,255,255,0.35);
+  border-top-color:#fff;
+  animation:spin 0.8s linear infinite;
+  margin-bottom:8px;
+}
+@keyframes spin{to{transform:rotate(360deg);}}
+.full-screen-center .muted{color:#DCE8F5;}
+
+/* ============ AUTH CARDS (arch motif echoing the church emblem) ============ */
+.auth-card{
+  background:var(--color-surface);
+  width:100%;
+  max-width:380px;
+  padding:36px 28px 28px;
+  border-radius:18px 18px 8px 8px;
+  box-shadow:var(--shadow-lg);
+  position:relative;
+  display:flex;
+  flex-direction:column;
+  gap:10px;
+}
+.arch-card{ border-top:6px solid var(--color-accent); }
+.arch-card-top{
+  position:absolute;
+  top:-34px; left:50%; transform:translateX(-50%);
+  width:64px; height:64px;
+  background:var(--color-primary);
+  border-radius:50% 50% 4px 4px / 60% 60% 4px 4px;
+  box-shadow:var(--shadow);
+}
+.logo-login{
+  width:56px;height:56px;object-fit:contain;
+  margin:0 auto 4px;
+  display:block;
+}
+.church-title-ta{
+  font-family:var(--font-tamil);
+  font-size:1.15rem;
+  text-align:center;
+  color:var(--color-primary-dark);
+  margin:6px 0 0;
+}
+.church-title-en{
+  font-family:var(--font-display);
+  font-size:1.02rem;
+  font-weight:700;
+  text-align:center;
+  color:var(--color-primary);
+  margin:0 0 6px;
+}
+.auth-card label{font-size:0.85rem;font-weight:600;color:var(--color-text);margin-top:6px;}
+.auth-card input{
+  padding:10px 12px;
+  border:1px solid var(--color-border);
+  border-radius:8px;
+  font-size:0.95rem;
+  font-family:inherit;
+}
+.auth-card input:focus{outline:2px solid var(--color-primary);outline-offset:1px;}
+.error-text{color:var(--color-danger);font-size:0.85rem;margin:4px 0 0;}
+
+/* ============ BUTTONS ============ */
+.btn{
+  border:none;border-radius:8px;padding:10px 16px;
+  font-family:inherit;font-weight:600;font-size:0.92rem;
+  cursor:pointer;transition:filter .15s ease, transform .05s ease;
+}
+.btn:active{transform:scale(0.98);}
+.btn-primary{background:var(--color-primary);color:#fff;}
+.btn-primary:hover{filter:brightness(1.1);}
+.btn-secondary{background:var(--color-accent);color:#3A2E00;}
+.btn-secondary:hover{filter:brightness(1.08);}
+.btn-ghost{background:transparent;color:var(--color-danger);border:1px solid var(--color-border);}
+.btn-danger{background:var(--color-danger);color:#fff;}
+.btn-block{width:100%;margin-top:8px;}
+.link-btn{background:none;border:none;color:var(--color-primary);cursor:pointer;font-size:0.82rem;text-decoration:underline;padding:0;}
+.icon-btn{background:none;border:none;font-size:1.3rem;cursor:pointer;color:var(--color-primary-dark);}
+
+/* ============ TOOLTIP ============ */
+.tooltip{
+  display:inline-flex;align-items:center;justify-content:center;
+  width:16px;height:16px;border-radius:50%;
+  background:var(--color-border);color:var(--color-primary-dark);
+  font-size:0.7rem;font-weight:700;cursor:help;position:relative;
+}
+.tooltip:hover::after{
+  content:attr(data-tip);
+  position:absolute;bottom:130%;left:50%;transform:translateX(-50%);
+  background:var(--color-primary-dark);color:#fff;
+  padding:6px 10px;border-radius:6px;font-size:0.75rem;font-weight:400;
+  width:200px;white-space:normal;z-index:50;box-shadow:var(--shadow);
+}
+
+/* ============ APP SHELL ============ */
+#appShell{display:flex;min-height:100vh;}
+.sidebar{
+  width:230px;flex-shrink:0;
+  background:var(--color-primary-dark);
+  color:#fff;
+  display:flex;flex-direction:column;
+  padding:18px 14px;
+  position:fixed;top:0;left:0;bottom:0;
+  z-index:40;
+  transition:transform .25s ease;
+}
+.sidebar-brand{display:flex;align-items:center;gap:10px;margin-bottom:22px;padding:0 4px;}
+.sb-logo{width:38px;height:38px;object-fit:contain;}
+.sb-name-en{font-family:var(--font-display);font-size:0.85rem;font-weight:700;line-height:1.2;}
+.sb-name-ta{font-family:var(--font-tamil);font-size:0.72rem;color:#B9CBDD;}
+.nav-links{display:flex;flex-direction:column;gap:4px;flex:1;}
+.nav-link{
+  display:flex;align-items:center;gap:10px;
+  background:none;border:none;color:#D8E4F0;
+  padding:10px 12px;border-radius:8px;
+  font-family:inherit;font-size:0.9rem;cursor:pointer;text-align:left;
+}
+.nav-link:hover{background:rgba(255,255,255,0.08);}
+.nav-link.active{background:var(--color-accent);color:#3A2E00;font-weight:700;}
+.sidebar-backdrop{display:none;}
+
+.main-area{flex:1;margin-left:230px;display:flex;flex-direction:column;min-height:100vh;}
+.topbar{
+  background:var(--color-surface);
+  border-bottom:1px solid var(--color-border);
+  padding:14px 24px;
+  display:flex;align-items:center;gap:12px;
+  position:sticky;top:0;z-index:20;
+}
+.view-title{font-family:var(--font-display);font-size:1.3rem;margin:0;flex:1;color:var(--color-primary-dark);}
+.topbar-right{display:flex;align-items:center;gap:10px;}
+.mobile-only{display:none;}
+
+.view-container{padding:22px;flex:1;}
+.view{animation:fadein .2s ease;}
+@keyframes fadein{from{opacity:0;transform:translateY(4px);}to{opacity:1;transform:none;}}
+
+/* ============ CARDS / WIDGETS ============ */
+.card{
+  background:var(--color-surface);
+  border:1px solid var(--color-border);
+  border-radius:var(--radius);
+  padding:18px;
+  box-shadow:var(--shadow);
+}
+.widget-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px;margin-bottom:20px;}
+.widget-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;}
+.widget-head h3{margin:0;font-size:0.95rem;color:var(--color-primary-dark);}
+.stat-row{display:flex;justify-content:space-between;padding:4px 0;font-size:0.92rem;}
+.stat-highlight{border-top:1px dashed var(--color-border);margin-top:4px;padding-top:8px;font-weight:700;}
+.stat-dot{width:9px;height:9px;border-radius:50%;display:inline-block;margin-right:6px;}
+.dot-green{background:var(--color-success);}
+.dot-red{background:var(--color-danger);}
+.clean-list{list-style:none;padding:0;margin:0;display:flex;flex-direction:column;gap:6px;}
+.clean-list li{font-size:0.88rem;padding:6px 8px;background:var(--color-bg);border-radius:6px;}
+
+.special-event-banner{
+  background:linear-gradient(90deg, var(--color-accent), #E4C55A);
+  color:#3A2E00;padding:12px 16px;border-radius:var(--radius);
+  margin-bottom:18px;font-weight:600;
+}
+.pastor-footer{
+  margin-top:26px;padding:14px;text-align:center;
+  background:var(--color-primary-dark);color:#fff;
+  border-radius:var(--radius);font-family:var(--font-display);
+  letter-spacing:0.5px;
+}
+
+/* ============ TOOLBAR / TABLE ============ */
+.toolbar{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:16px;flex-wrap:wrap;}
+.search-input{
+  flex:1;min-width:200px;padding:9px 12px;
+  border:1px solid var(--color-border);border-radius:8px;font-family:inherit;
+}
+.table-wrap{overflow-x:auto;background:var(--color-surface);border-radius:var(--radius);border:1px solid var(--color-border);}
+.data-table{width:100%;border-collapse:collapse;font-size:0.9rem;}
+.data-table th{
+  text-align:left;background:var(--color-bg);color:var(--color-primary-dark);
+  padding:10px 12px;border-bottom:1px solid var(--color-border);white-space:nowrap;
+}
+.data-table td{padding:10px 12px;border-bottom:1px solid var(--color-border);}
+.data-table tr:last-child td{border-bottom:none;}
+.badge{padding:3px 9px;border-radius:20px;font-size:0.75rem;font-weight:700;}
+.badge-active{background:#E3F3E9;color:var(--color-success);}
+.badge-suspended{background:#FDF3D8;color:#8A6D00;}
+.badge-inactive{background:#FBE7E5;color:var(--color-danger);}
+.row-actions{display:flex;gap:6px;}
+.row-actions button{background:none;border:1px solid var(--color-border);border-radius:6px;padding:4px 8px;cursor:pointer;font-size:0.8rem;}
+
+/* ============ REPORTS ============ */
+.report-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;}
+.report-card{
+  display:flex;flex-direction:column;align-items:center;gap:8px;
+  padding:26px 14px;cursor:pointer;font-family:inherit;font-weight:600;font-size:0.9rem;
+  color:var(--color-primary-dark);
+}
+.report-card:hover{border-color:var(--color-primary);}
+.report-icon{font-size:1.8rem;}
+
+/* ============ SETTINGS ============ */
+.settings-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px;}
+.settings-card h3{margin-top:0;color:var(--color-primary-dark);font-size:1rem;}
+.settings-card label{display:block;font-size:0.82rem;font-weight:600;margin:10px 0 4px;}
+.settings-card input[type=text],
+.settings-card input[type=number],
+.settings-card input[type=date],
+.settings-card input[type=file]{
+  width:100%;padding:8px 10px;border:1px solid var(--color-border);border-radius:6px;font-family:inherit;
+}
+.settings-card input[type=color]{width:60px;height:34px;border:none;background:none;cursor:pointer;}
+.logo-preview{width:70px;height:70px;object-fit:contain;margin-top:8px;border:1px solid var(--color-border);border-radius:8px;padding:4px;}
+
+/* ============ MODALS ============ */
+.modal-overlay{
+  position:fixed;inset:0;background:rgba(18,37,60,0.55);
+  display:flex;align-items:center;justify-content:center;
+  z-index:100;padding:16px;
+}
+.modal-box{
+  background:var(--color-surface);border-radius:14px;
+  width:100%;max-width:520px;max-height:90vh;overflow-y:auto;
+  padding:24px;position:relative;box-shadow:var(--shadow-lg);
+}
+.modal-close{
+  position:absolute;top:14px;right:14px;
+  width:30px;height:30px;border-radius:50%;border:none;
+  background:var(--color-bg);color:var(--color-primary-dark);
+  font-size:1rem;cursor:pointer;line-height:1;
+}
+.modal-box h2{margin-top:0;font-family:var(--font-display);color:var(--color-primary-dark);font-size:1.15rem;}
+.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px 14px;}
+.form-grid .full{grid-column:1/-1;}
+.form-grid label{font-size:0.82rem;font-weight:600;margin-bottom:3px;display:block;}
+.form-grid input,.form-grid select{width:100%;padding:8px 10px;border:1px solid var(--color-border);border-radius:6px;font-family:inherit;}
+.modal-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:18px;}
+.tabs{display:flex;gap:4px;margin:14px 0;border-bottom:1px solid var(--color-border);}
+.tab-btn{background:none;border:none;padding:8px 12px;cursor:pointer;font-family:inherit;font-size:0.85rem;color:var(--color-muted);border-bottom:2px solid transparent;}
+.tab-btn.active{color:var(--color-primary);border-color:var(--color-primary);font-weight:700;}
+.tab-panel{display:none;}
+.tab-panel.active{display:block;}
+.subitem{display:flex;justify-content:space-between;align-items:center;background:var(--color-bg);padding:8px 10px;border-radius:6px;margin-bottom:6px;font-size:0.85rem;}
+
+/* ============ TOAST ============ */
+.toast-root{position:fixed;bottom:20px;right:20px;z-index:200;display:flex;flex-direction:column;gap:8px;}
+.toast{
+  background:var(--color-primary-dark);color:#fff;padding:12px 16px;border-radius:8px;
+  font-size:0.88rem;box-shadow:var(--shadow-lg);animation:toastin .2s ease;max-width:280px;
+}
+.toast.error{background:var(--color-danger);}
+.toast.success{background:var(--color-success);}
+@keyframes toastin{from{opacity:0;transform:translateY(8px);}to{opacity:1;transform:none;}}
+
+/* ============ CREDENTIAL SLIP ============ */
+.cred-slip{
+  border:2px dashed var(--color-accent);border-radius:10px;padding:14px;
+  background:#FFFBEF;margin-top:10px;font-size:0.9rem;
+}
+.cred-slip b{font-family:monospace;font-size:1rem;}
+
+/* ============ RESPONSIVE ============ */
+@media (max-width: 860px){
+  .sidebar{transform:translateX(-100%);}
+  .sidebar.open{transform:translateX(0);}
+  .sidebar-backdrop.open{
+    display:block;position:fixed;inset:0;background:rgba(0,0,0,0.4);z-index:39;
+  }
+  .main-area{margin-left:0;}
+  .mobile-only{display:inline-block;}
+  .form-grid{grid-template-columns:1fr;}
+}
+
+/* ============ PRINT (used for PDF export via browser Print > Save as PDF) ============ */
+@media print{
+  body *{visibility:hidden;}
+  #printArea, #printArea *{visibility:visible;}
+  #printArea{position:absolute;top:0;left:0;width:100%;padding:24px;}
+}
+#printArea{display:none;}
+#printArea.showing{display:block;}
+#printArea table{width:100%;border-collapse:collapse;margin-top:12px;}
+#printArea th,#printArea td{border:1px solid #ccc;padding:6px 8px;font-size:0.85rem;text-align:left;}
+#printArea h1{font-family:var(--font-display);margin-bottom:0;}
+#printArea .print-sub{color:#555;margin-top:2px;}
+
+/* focus visibility for accessibility */
+button:focus-visible, input:focus-visible, a:focus-visible{
+  outline:2px solid var(--color-primary);outline-offset:2px;
+}
+
+</style>
+</head>
+<body>
+
+<!-- ================= LOADING ================= -->
+<div id="loadingScreen" class="full-screen-center">
+  <div class="brand-mark">
+    <img id="loadingLogo" src="" alt="" class="logo-loading" />
+  </div>
+  <div class="spinner"></div>
+  <p class="muted">Loading...</p>
+</div>
+
+<!-- ================= BOOTSTRAP (first run: create primary admin) ================= -->
+<div id="bootstrapScreen" class="full-screen-center hidden">
+  <form id="bootstrapForm" class="auth-card arch-card">
+    <div class="arch-card-top"></div>
+    <h1 class="church-title-ta">கொர்நேலியு ஆண்கள் ஐக்கியம்</h1>
+    <h2 class="church-title-en">Evangelical Church of India — First-Time Setup</h2>
+    <p class="muted small">No admin account exists yet. Create the primary administrator account to get started.</p>
+
+    <label>Admin Name <span class="tooltip" data-tip="This is shown as who set up the account. Not visible to members.">?</span></label>
+    <input type="text" id="bsName" required placeholder="Your full name" />
+
+    <label>Choose a User ID <span class="tooltip" data-tip="Used to sign in. Pick something only you know — this account has full access.">?</span></label>
+    <input type="text" id="bsUserId" required placeholder="e.g. admin1" autocomplete="off" />
+
+    <label>Choose a Password <span class="tooltip" data-tip="At least 6 characters. You are the only one who will use this login.">?</span></label>
+    <input type="password" id="bsPassword" required minlength="6" placeholder="Minimum 6 characters" />
+
+    <button type="submit" class="btn btn-primary btn-block">Create Primary Admin Account</button>
+    <p id="bsError" class="error-text hidden"></p>
+  </form>
+</div>
+
+<!-- ================= LOGIN ================= -->
+<div id="loginScreen" class="full-screen-center hidden">
+  <form id="loginForm" class="auth-card arch-card">
+    <div class="arch-card-top"></div>
+    <img id="loginLogo" src="" alt="Church logo" class="logo-login hidden" />
+    <h1 id="loginChurchNameTa" class="church-title-ta"></h1>
+    <h2 id="loginChurchNameEn" class="church-title-en"></h2>
+    <p id="loginTagline" class="muted small"></p>
+
+    <label>User ID</label>
+    <input type="text" id="loginUserId" required placeholder="Your User ID" autocomplete="username" />
+
+    <label>Password</label>
+    <input type="password" id="loginPassword" required placeholder="Your Password" autocomplete="current-password" />
+
+    <button type="submit" class="btn btn-primary btn-block">Sign In</button>
+    <p id="loginError" class="error-text hidden"></p>
+    <p class="muted tiny center-text">Forgot your password? Ask your church admin to reset it for you.</p>
+  </form>
+</div>
+
+<!-- ================= FORCE PASSWORD CHANGE ================= -->
+<div id="forcePwScreen" class="full-screen-center hidden">
+  <form id="forcePwForm" class="auth-card arch-card">
+    <div class="arch-card-top"></div>
+    <h2 class="church-title-en">Set a New Password</h2>
+    <p class="muted small">You're using a temporary password. Please set your own before continuing.</p>
+    <label>New Password</label>
+    <input type="password" id="newPassword" required minlength="6" placeholder="Minimum 6 characters" />
+    <label>Confirm New Password</label>
+    <input type="password" id="confirmPassword" required minlength="6" placeholder="Re-enter password" />
+    <button type="submit" class="btn btn-primary btn-block">Save & Continue</button>
+    <p id="forcePwError" class="error-text hidden"></p>
+  </form>
+</div>
+
+<!-- ================= APP SHELL ================= -->
+<div id="appShell" class="hidden">
+
+  <aside id="sidebar" class="sidebar">
+    <div class="sidebar-brand">
+      <img id="sbLogo" src="" alt="" class="sb-logo hidden" />
+      <div>
+        <div id="sbChurchNameEn" class="sb-name-en"></div>
+        <div id="sbChurchNameTa" class="sb-name-ta"></div>
+      </div>
+    </div>
+    <nav class="nav-links">
+      <button class="nav-link active" data-view="dashboard">🏠 <span>Dashboard</span></button>
+      <button class="nav-link admin-only" data-view="members">👥 <span>Members</span></button>
+      <button class="nav-link admin-only" data-view="expenses">💸 <span>Expenses</span></button>
+      <button class="nav-link" data-view="reports">📄 <span>Reports</span></button>
+      <button class="nav-link admin-only" data-view="settings">⚙️ <span>Settings</span></button>
+      <button class="nav-link primary-admin-only" data-view="adminmgmt">🛡️ <span>Admin Accounts</span></button>
+    </nav>
+    <button id="logoutBtn" class="btn btn-ghost btn-block">Log Out</button>
+  </aside>
+
+  <div class="sidebar-backdrop" id="sidebarBackdrop"></div>
+
+  <main class="main-area">
+    <header class="topbar">
+      <button id="menuToggle" class="icon-btn mobile-only" aria-label="Menu">☰</button>
+      <h1 id="viewTitle" class="view-title">Dashboard</h1>
+      <div class="topbar-right">
+        <span id="whoami" class="muted small"></span>
+      </div>
+    </header>
+
+    <div class="view-container" id="viewContainer">
+
+      <!-- DASHBOARD -->
+      <section id="view-dashboard" class="view">
+        <div id="specialEventBanner" class="special-event-banner hidden"></div>
+
+        <div class="widget-grid">
+          <div class="widget card">
+            <div class="widget-head">
+              <h3>Payment Status <span class="tiny muted">(this month)</span></h3>
+              <button class="link-btn toggle-widget" data-target="paidStatusBody">Hide</button>
+            </div>
+            <div id="paidStatusBody" class="widget-body">
+              <div class="stat-row"><span class="stat-dot dot-green"></span> Paid: <b id="statPaid">0</b></div>
+              <div class="stat-row"><span class="stat-dot dot-red"></span> Not Paid: <b id="statUnpaid">0</b></div>
+            </div>
+          </div>
+
+          <div class="widget card">
+            <div class="widget-head">
+              <h3>🎂 Birthdays This Week</h3>
+              <button class="link-btn toggle-widget" data-target="birthdayBody">Hide</button>
+            </div>
+            <div id="birthdayBody" class="widget-body">
+              <ul id="birthdayList" class="clean-list"><li class="muted">Loading...</li></ul>
+            </div>
+          </div>
+
+          <div class="widget card admin-only">
+            <div class="widget-head">
+              <h3>Fund Summary</h3>
+              <button class="link-btn toggle-widget" data-target="fundBody">Hide</button>
+            </div>
+            <div id="fundBody" class="widget-body">
+              <div class="stat-row">Collected: <b id="statCollected">₹0</b></div>
+              <div class="stat-row">Expenses: <b id="statExpenses">₹0</b></div>
+              <div class="stat-row stat-highlight">In Hand: <b id="statInHand">₹0</b></div>
+            </div>
+          </div>
+
+          <div class="widget card">
+            <div class="widget-head"><h3>📌 Special Events</h3></div>
+            <div class="widget-body">
+              <ul id="eventList" class="clean-list"><li class="muted">No events posted.</li></ul>
+            </div>
+          </div>
+        </div>
+
+        <div id="pastorFooter" class="pastor-footer hidden"></div>
+      </section>
+
+      <!-- MEMBERS -->
+      <section id="view-members" class="view hidden">
+        <div class="toolbar">
+          <input type="search" id="memberSearch" placeholder="Search members by name or mobile..." class="search-input" />
+          <button class="btn btn-primary" id="addMemberBtn">+ Add Member</button>
+        </div>
+        <div class="table-wrap">
+          <table class="data-table" id="membersTable">
+            <thead>
+              <tr><th>Name</th><th>Mobile</th><th>Status</th><th>Joined</th><th></th></tr>
+            </thead>
+            <tbody id="membersTableBody"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- EXPENSES -->
+      <section id="view-expenses" class="view hidden">
+        <div class="toolbar">
+          <h3 class="muted">Church Expenses</h3>
+          <button class="btn btn-primary" id="addExpenseBtn">+ Add Expense</button>
+        </div>
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead><tr><th>Date</th><th>Description</th><th>Amount</th><th></th></tr></thead>
+            <tbody id="expensesTableBody"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- REPORTS -->
+      <section id="view-reports" class="view hidden">
+        <div class="report-grid">
+          <button class="report-card card admin-only" data-report="members">
+            <span class="report-icon">👥</span>
+            <span>Member Entry Report</span>
+          </button>
+          <button class="report-card card admin-only" data-report="family">
+            <span class="report-icon">👨‍👩‍👧</span>
+            <span>Family Details Report</span>
+          </button>
+          <button class="report-card card admin-only" data-report="pending">
+            <span class="report-icon">⏳</span>
+            <span>Pending Payments Report</span>
+          </button>
+          <button class="report-card card member-only" data-report="mypayments">
+            <span class="report-icon">🧾</span>
+            <span>My Payment History</span>
+          </button>
+        </div>
+      </section>
+
+      <!-- SETTINGS -->
+      <section id="view-settings" class="view hidden">
+        <div class="settings-grid">
+
+          <div class="card settings-card">
+            <h3>Church Details</h3>
+            <label>Church Name (English)</label>
+            <input type="text" id="setNameEn" />
+            <label>Church Name (Tamil)</label>
+            <input type="text" id="setNameTa" lang="ta" />
+            <label>Tagline</label>
+            <input type="text" id="setTagline" />
+            <label>Logo <span class="tooltip" data-tip="Upload a square image, ideally under 500KB.">?</span></label>
+            <input type="file" id="setLogoFile" accept="image/*" />
+            <img id="setLogoPreview" class="logo-preview hidden" />
+            <button class="btn btn-secondary" id="saveChurchBtn">Save Church Details</button>
+          </div>
+
+          <div class="card settings-card">
+            <h3>Theme</h3>
+            <label>Primary Color</label>
+            <input type="color" id="setPrimaryColor" />
+            <label>Accent Color</label>
+            <input type="color" id="setAccentColor" />
+            <button class="btn btn-secondary" id="saveThemeBtn">Apply Theme</button>
+          </div>
+
+          <div class="card settings-card primary-admin-only">
+            <h3>Pastor Name <span class="tooltip" data-tip="Shown at the bottom of every member's dashboard.">?</span></h3>
+            <input type="text" id="setPastorName" />
+            <button class="btn btn-secondary" id="savePastorBtn">Save</button>
+          </div>
+
+          <div class="card settings-card">
+            <h3>Membership Status Rules</h3>
+            <label>Months unpaid → Suspended</label>
+            <input type="number" id="setSuspendMonths" min="1" />
+            <label>Months unpaid → Inactive</label>
+            <input type="number" id="setInactiveMonths" min="1" />
+            <button class="btn btn-secondary" id="saveRulesBtn">Save Rules</button>
+          </div>
+
+          <div class="card settings-card">
+            <h3>Special Events</h3>
+            <div id="eventEditList" class="clean-list"></div>
+            <label>New Event Title</label>
+            <input type="text" id="newEventTitle" />
+            <label>Date</label>
+            <input type="date" id="newEventDate" />
+            <button class="btn btn-secondary" id="addEventBtn">+ Add Event</button>
+          </div>
+
+        </div>
+      </section>
+
+      <!-- ADMIN MANAGEMENT -->
+      <section id="view-adminmgmt" class="view hidden">
+        <div class="toolbar">
+          <h3 class="muted">Admin Accounts</h3>
+          <button class="btn btn-primary" id="addAdminBtn">+ Add Admin</button>
+        </div>
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead><tr><th>Name</th><th>User ID</th><th>Role</th><th>Permissions</th><th></th></tr></thead>
+            <tbody id="adminsTableBody"></tbody>
+          </table>
+        </div>
+      </section>
+
+    </div>
+  </main>
+</div>
+
+<!-- ================= MODAL ROOT ================= -->
+<div id="modalRoot"></div>
+
+<!-- ================= TOAST ================= -->
+<div id="toastRoot" class="toast-root"></div>
+
+<script id="app-script">
+/* =========================================================
+   ECI Member Management App
+   Single-file static app for GitHub Pages + Firebase (free tier)
+   ========================================================= */
+
+const firebaseConfig = {
+  apiKey: "AIzaSyAryzPQJ5mZe7cpWdL2U07qOVfvB6CrpF8",
+  authDomain: "eci-sempon-nagar.firebaseapp.com",
+  projectId: "eci-sempon-nagar",
+  storageBucket: "eci-sempon-nagar.firebasestorage.app",
+  messagingSenderId: "414242880346",
+  appId: "1:414242880346:web:e60c846f118f02bd4ad163",
+  measurementId: "G-6JQRTVQ02X"
+};
+
+const EMAIL_DOMAIN = "eci-app.local"; // pseudo-domain: Firebase Auth requires an email shape
+
+firebase.initializeApp(firebaseConfig);
+// Secondary app instance: lets admins create new Auth accounts (members/admins)
+// without signing themselves out (a quirk of the client Firebase SDK).
+const secondaryApp = firebase.initializeApp(firebaseConfig, "Secondary");
+
+const auth = firebase.auth();
+const secondaryAuth = secondaryApp.auth();
+const db = firebase.firestore();
+const storage = firebase.storage();
+
+function toEmail(userId){ return `${String(userId).trim()}@${EMAIL_DOMAIN}`; }
+
+/* ---------- App state ---------- */
+const state = {
+  role: null,            // 'primary' | 'secondary' | 'member'
+  uid: null,
+  adminDoc: null,
+  memberDoc: null,
+  settings: null,
+  membersCache: [],
+  adminsCache: []
+};
+
+/* ---------- Small utilities ---------- */
+function $(sel){ return document.querySelector(sel); }
+function $all(sel){ return Array.from(document.querySelectorAll(sel)); }
+function show(el){ el.classList.remove('hidden'); }
+function hide(el){ el.classList.add('hidden'); }
+
+function toast(msg, type){
+  const root = $('#toastRoot');
+  const t = document.createElement('div');
+  t.className = 'toast' + (type ? ' ' + type : '');
+  t.textContent = msg;
+  root.appendChild(t);
+  setTimeout(()=>t.remove(), 4200);
+}
+
+function fmtDate(d){
+  if(!d) return '-';
+  const dt = (d instanceof Date) ? d : new Date(d);
+  if(isNaN(dt)) return '-';
+  return dt.toLocaleDateString('en-IN', {day:'2-digit', month:'short', year:'numeric'});
+}
+function fmtMoney(n){
+  n = Number(n)||0;
+  return '₹' + n.toLocaleString('en-IN');
+}
+function monthKey(d){
+  const dt = (d instanceof Date) ? d : new Date(d);
+  return `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}`;
+}
+function monthsBetween(a,b){
+  return (b.getFullYear()-a.getFullYear())*12 + (b.getMonth()-a.getMonth());
+}
+
+/* ---------- Modal helper ---------- */
+function openModal(innerHtml){
+  const root = $('#modalRoot');
+  root.innerHTML = `
+    <div class="modal-overlay" id="activeOverlay">
+      <div class="modal-box">
+        <button class="modal-close" id="activeModalClose" aria-label="Close">✕</button>
+        ${innerHtml}
+      </div>
+    </div>`;
+  $('#activeModalClose').addEventListener('click', closeModal);
+  $('#activeOverlay').addEventListener('click', (e)=>{ if(e.target.id==='activeOverlay') closeModal(); });
+}
+function closeModal(){ $('#modalRoot').innerHTML = ''; }
+
+/* ---------- Screen switching ---------- */
+function showOnly(id){
+  ['loadingScreen','bootstrapScreen','loginScreen','forcePwScreen','appShell'].forEach(s=>{
+    const el = document.getElementById(s);
+    if(s===id) el.classList.remove('hidden'); else el.classList.add('hidden');
+  });
+}
+
+/* =========================================================
+   BOOTSTRAP / AUTH FLOW
+   ========================================================= */
+
+async function checkBootstrapAndSettings(){
+  const snap = await db.collection('settings').doc('public').get();
+  if(!snap.exists){
+    showOnly('bootstrapScreen');
+    return null;
+  }
+  state.settings = snap.data();
+  return state.settings;
+}
+
+$('#bootstrapForm').addEventListener('submit', async (e)=>{
+  e.preventDefault();
+  const name = $('#bsName').value.trim();
+  const userId = $('#bsUserId').value.trim();
+  const password = $('#bsPassword').value;
+  const errEl = $('#bsError');
+  hide(errEl);
+  try{
+    const cred = await auth.createUserWithEmailAndPassword(toEmail(userId), password);
+    const uid = cred.user.uid;
+    await db.collection('admins').doc(uid).set({
+      name, userId, role:'primary',
+      permissions:{ members:true, expenses:true, settings:true },
+      mustChangePassword:false,
+      createdAt: firebase.firestore.FieldValue.serverTimestamp()
+    });
+    await db.collection('settings').doc('public').set({
+      nameEn:'My Church', nameTa:'', tagline:'',
+      logoUrl:'', theme:{primary:'#1E3A5F', accent:'#C9A227'},
+      pastorName:'', suspendMonths:2, inactiveMonths:5,
+      events:[], primaryAdminCreated:true
+    });
+    toast('Primary admin created. Signing you in...', 'success');
+    // onAuthStateChanged will pick up the new session automatically
+  }catch(err){
+    errEl.textContent = err.message;
+    show(errEl);
+  }
+});
+
+$('#loginForm').addEventListener('submit', async (e)=>{
+  e.preventDefault();
+  const userId = $('#loginUserId').value.trim();
+  const password = $('#loginPassword').value;
+  const errEl = $('#loginError');
+  hide(errEl);
+  try{
+    await auth.signInWithEmailAndPassword(toEmail(userId), password);
+  }catch(err){
+    errEl.textContent = 'Incorrect User ID or password.';
+    show(errEl);
+  }
+});
+
+$('#forcePwForm').addEventListener('submit', async (e)=>{
+  e.preventDefault();
+  const p1 = $('#newPassword').value;
+  const p2 = $('#confirmPassword').value;
+  const errEl = $('#forcePwError');
+  hide(errEl);
+  if(p1 !== p2){ errEl.textContent = 'Passwords do not match.'; show(errEl); return; }
+  try{
+    await auth.currentUser.updatePassword(p1);
+    const coll = state.role === 'member' ? 'members' : 'admins';
+    await db.collection(coll).doc(state.uid).update({ mustChangePassword:false });
+    if(state.role==='member') state.memberDoc.mustChangePassword = false;
+    else state.adminDoc.mustChangePassword = false;
+    await enterApp();
+  }catch(err){
+    errEl.textContent = err.message;
+    show(errEl);
+  }
+});
+
+$('#logoutBtn').addEventListener('click', ()=> auth.signOut());
+
+auth.onAuthStateChanged(async (user)=>{
+  showOnly('loadingScreen');
+  const settings = await checkBootstrapAndSettings();
+  if(settings === null) return; // bootstrap screen already shown
+
+  applySettingsToLoginScreen(settings);
+  applyTheme(settings.theme);
+
+  if(!user){
+    showOnly('loginScreen');
+    return;
+  }
+
+  state.uid = user.uid;
+  const adminSnap = await db.collection('admins').doc(user.uid).get();
+  if(adminSnap.exists){
+    state.role = adminSnap.data().role === 'primary' ? 'primary' : 'secondary';
+    state.adminDoc = adminSnap.data();
+    if(state.adminDoc.mustChangePassword){ showOnly('forcePwScreen'); return; }
+    await enterApp();
+    return;
+  }
+
+  const memberSnap = await db.collection('members').doc(user.uid).get();
+  if(memberSnap.exists){
+    state.role = 'member';
+    state.memberDoc = { id: memberSnap.id, ...memberSnap.data() };
+    if(state.memberDoc.mustChangePassword){ showOnly('forcePwScreen'); return; }
+    await enterApp();
+    return;
+  }
+
+  // Signed in but no matching profile - shouldn't normally happen
+  toast('No profile found for this account. Contact your admin.', 'error');
+  auth.signOut();
+});
+
+function applySettingsToLoginScreen(settings){
+  $('#loginChurchNameTa').textContent = settings.nameTa || '';
+  $('#loginChurchNameEn').textContent = settings.nameEn || '';
+  $('#loginTagline').textContent = settings.tagline || '';
+  $('#loadingLogo').src = settings.logoUrl || '';
+  if(settings.logoUrl){ $('#loginLogo').src = settings.logoUrl; show($('#loginLogo')); }
+}
+
+function applyTheme(theme){
+  if(!theme) return;
+  document.documentElement.style.setProperty('--color-primary', theme.primary || '#1E3A5F');
+  document.documentElement.style.setProperty('--color-accent', theme.accent || '#C9A227');
+}
+
+
+/* =========================================================
+   APP SHELL / NAVIGATION
+   ========================================================= */
+
+async function enterApp(){
+  showOnly('appShell');
+  const s = state.settings;
+
+  $('#sbChurchNameEn').textContent = s.nameEn || '';
+  $('#sbChurchNameTa').textContent = s.nameTa || '';
+  if(s.logoUrl){ $('#sbLogo').src = s.logoUrl; show($('#sbLogo')); }
+
+  const displayName = state.role==='member' ? state.memberDoc.name : state.adminDoc.name;
+  const roleLabel = state.role==='primary' ? 'Primary Admin' : state.role==='secondary' ? 'Admin' : 'Member';
+  $('#whoami').textContent = `${displayName} · ${roleLabel}`;
+
+  applyRoleVisibility();
+  wireNav();
+  wireDashboardToggles();
+  wireMemberModule();
+  wireExpenseModule();
+  wireReportModule();
+  wireSettingsModule();
+  wireAdminModule();
+
+  await renderDashboard();
+  switchView('dashboard');
+}
+
+function applyRoleVisibility(){
+  const perms = state.role==='primary' ? {members:true,expenses:true,settings:true}
+              : state.role==='secondary' ? (state.adminDoc.permissions||{})
+              : {};
+  $all('.admin-only').forEach(el=>{
+    const isAdminRole = state.role==='primary' || state.role==='secondary';
+    let allowed = isAdminRole;
+    if(isAdminRole && state.role==='secondary'){
+      const view = el.dataset.view;
+      if(view==='members') allowed = !!perms.members;
+      else if(view==='expenses') allowed = !!perms.expenses;
+      else if(view==='settings') allowed = !!perms.settings;
+    }
+    el.classList.toggle('hidden', !allowed);
+  });
+  $all('.primary-admin-only').forEach(el=> el.classList.toggle('hidden', state.role!=='primary'));
+  $all('.member-only').forEach(el=> el.classList.toggle('hidden', state.role!=='member'));
+}
+
+function wireNav(){
+  $all('.nav-link').forEach(btn=>{
+    btn.onclick = ()=>{
+      switchView(btn.dataset.view);
+      $('#sidebar').classList.remove('open');
+      $('#sidebarBackdrop').classList.remove('open');
+    };
+  });
+  $('#menuToggle').onclick = ()=>{
+    $('#sidebar').classList.toggle('open');
+    $('#sidebarBackdrop').classList.toggle('open');
+  };
+  $('#sidebarBackdrop').onclick = ()=>{
+    $('#sidebar').classList.remove('open');
+    $('#sidebarBackdrop').classList.remove('open');
+  };
+}
+
+const VIEW_TITLES = {
+  dashboard:'Dashboard', members:'Members', expenses:'Expenses',
+  reports:'Reports', settings:'Settings', adminmgmt:'Admin Accounts'
+};
+
+async function switchView(view){
+  $all('.nav-link').forEach(b=> b.classList.toggle('active', b.dataset.view===view));
+  $all('.view').forEach(v=> v.classList.add('hidden'));
+  show($('#view-' + view));
+  $('#viewTitle').textContent = VIEW_TITLES[view] || '';
+
+  if(view==='members') await renderMembersTable();
+  if(view==='expenses') await renderExpensesTable();
+  if(view==='settings') populateSettingsForm();
+  if(view==='adminmgmt') await renderAdminsTable();
+  if(view==='dashboard') await renderDashboard();
+}
+
+/* =========================================================
+   DASHBOARD
+   ========================================================= */
+
+function wireDashboardToggles(){
+  $all('.toggle-widget').forEach(btn=>{
+    btn.onclick = ()=>{
+      const body = document.getElementById(btn.dataset.target);
+      const nowHidden = body.classList.toggle('hidden');
+      btn.textContent = nowHidden ? 'Show' : 'Hide';
+    };
+  });
+}
+
+async function renderDashboard(){
+  const s = state.settings;
+
+  // Pastor footer
+  if(s.pastorName){
+    $('#pastorFooter').textContent = `Pastor: ${s.pastorName}`;
+    show($('#pastorFooter'));
+  } else hide($('#pastorFooter'));
+
+  // Special events: banner if any within next 7 days, full list always
+  const events = (s.events||[]).slice().sort((a,b)=> new Date(a.date) - new Date(b.date));
+  const evList = $('#eventList');
+  evList.innerHTML = events.length ? '' : '<li class="muted">No events posted.</li>';
+  events.forEach(ev=>{
+    const li = document.createElement('li');
+    li.textContent = `${ev.title} — ${fmtDate(ev.date)}`;
+    evList.appendChild(li);
+  });
+  const today = new Date(); today.setHours(0,0,0,0);
+  const upcoming = events.find(ev=>{
+    const d = new Date(ev.date);
+    const diff = (d - today) / 86400000;
+    return diff >= 0 && diff <= 7;
+  });
+  const banner = $('#specialEventBanner');
+  if(upcoming){
+    banner.textContent = `📌 Upcoming: ${upcoming.title} — ${fmtDate(upcoming.date)}`;
+    show(banner);
+  } else hide(banner);
+
+  if(state.role==='member'){
+    // Simplified widgets for member view: just birthdays + events (no org-wide stats)
+    $all('.widget.card').forEach(w=>{ if(!w.classList.contains('admin-only')) {} });
+    renderBirthdaysWidget([state.memberDoc]);
+    hide($('.widget.card:has(#paidStatusBody)')); // best-effort; ignored on old browsers
+    return;
+  }
+
+  // Admin: pull all members once for the dashboard stats
+  const membersSnap = await db.collection('members').get();
+  const members = membersSnap.docs.map(d=> ({id:d.id, ...d.data()}));
+  state.membersCache = members;
+
+  const curMonth = monthKey(new Date());
+  let paid = 0, unpaid = 0;
+  for(const m of members){
+    const paySnap = await db.collection('members').doc(m.id).collection('payments')
+      .where('monthKey','==',curMonth).where('confirmed','==',true).limit(1).get();
+    if(!paySnap.empty) paid++; else unpaid++;
+  }
+  $('#statPaid').textContent = paid;
+  $('#statUnpaid').textContent = unpaid;
+
+  renderBirthdaysWidget(members);
+
+  // Fund summary
+  let collected = 0;
+  for(const m of members){
+    const paySnap = await db.collection('members').doc(m.id).collection('payments')
+      .where('confirmed','==',true).get();
+    paySnap.forEach(p=> collected += Number(p.data().amount)||0);
+  }
+  const expSnap = await db.collection('expenses').get();
+  let expenses = 0;
+  expSnap.forEach(e=> expenses += Number(e.data().amount)||0);
+  $('#statCollected').textContent = fmtMoney(collected);
+  $('#statExpenses').textContent = fmtMoney(expenses);
+  $('#statInHand').textContent = fmtMoney(collected - expenses);
+}
+
+function renderBirthdaysWidget(members){
+  const now = new Date();
+  const day = (now.getDay()+6)%7; // Monday=0
+  const monday = new Date(now); monday.setDate(now.getDate()-day); monday.setHours(0,0,0,0);
+  const sunday = new Date(monday); sunday.setDate(monday.getDate()+6);
+
+  const hits = [];
+  members.forEach(m=>{
+    if(!m.dob) return;
+    const dob = new Date(m.dob);
+    for(let i=0;i<7;i++){
+      const d = new Date(monday); d.setDate(monday.getDate()+i);
+      if(d.getMonth()===dob.getMonth() && d.getDate()===dob.getDate()){
+        hits.push({name:m.name, date:d});
+      }
+    }
+  });
+  const list = $('#birthdayList');
+  list.innerHTML = hits.length ? '' : '<li class="muted">No birthdays this week.</li>';
+  hits.sort((a,b)=>a.date-b.date).forEach(h=>{
+    const li = document.createElement('li');
+    li.textContent = `🎂 ${h.name} — ${fmtDate(h.date)}`;
+    list.appendChild(li);
+  });
+}
+
+
+/* =========================================================
+   MEMBERS
+   ========================================================= */
+
+function wireMemberModule(){
+  $('#addMemberBtn').onclick = ()=> openMemberForm(null);
+  $('#memberSearch').oninput = (e)=> filterMembersTable(e.target.value);
+}
+
+async function renderMembersTable(){
+  const snap = await db.collection('members').orderBy('name').get();
+  state.membersCache = snap.docs.map(d=> ({id:d.id, ...d.data()}));
+  filterMembersTable($('#memberSearch').value || '');
+}
+
+function statusBadge(status){
+  const cls = status==='Active' ? 'badge-active' : status==='Suspended' ? 'badge-suspended' : 'badge-inactive';
+  return `<span class="badge ${cls}">${status}</span>`;
+}
+
+function filterMembersTable(q){
+  q = (q||'').toLowerCase();
+  const body = $('#membersTableBody');
+  body.innerHTML = '';
+  state.membersCache
+    .filter(m => !q || (m.name||'').toLowerCase().includes(q) || (m.mobile||'').includes(q))
+    .forEach(m=>{
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td>${m.name||''}</td>
+        <td>${m.mobile||''}</td>
+        <td>${statusBadge(m.status||'Active')}</td>
+        <td>${fmtDate(m.joinedDate)}</td>
+        <td class="row-actions">
+          <button data-act="view">View</button>
+          <button data-act="edit">Edit</button>
+        </td>`;
+      tr.querySelector('[data-act="view"]').onclick = ()=> openMemberDetail(m.id);
+      tr.querySelector('[data-act="edit"]').onclick = ()=> openMemberForm(m.id);
+      body.appendChild(tr);
+    });
+}
+
+function openMemberForm(memberId){
+  const editing = !!memberId;
+  const m = editing ? state.membersCache.find(x=>x.id===memberId) : {};
+  openModal(`
+    <h2>${editing ? 'Edit Member' : 'Add Member'}</h2>
+    <form id="memberForm">
+      <div class="form-grid">
+        <div class="full">
+          <label>Full Name <span class="tooltip" data-tip="Member's full name as it should appear everywhere.">?</span></label>
+          <input type="text" id="mfName" required value="${m.name||''}">
+        </div>
+        <div>
+          <label>Father's / Husband's Name</label>
+          <input type="text" id="mfFatherHusband" value="${m.fatherHusbandName||''}">
+        </div>
+        <div>
+          <label>Date of Birth</label>
+          <input type="date" id="mfDob" value="${m.dob||''}">
+        </div>
+        <div>
+          <label>Mobile Number <span class="tooltip" data-tip="Required. Last 5 digits become the member's login User ID and starting password.">?</span></label>
+          <input type="tel" id="mfMobile" required pattern="[0-9]{7,15}" value="${m.mobile||''}" ${editing?'readonly':''}>
+        </div>
+        <div>
+          <label>Date Joined</label>
+          <input type="date" id="mfJoined" value="${m.joinedDate||''}">
+        </div>
+        <div class="full">
+          <label>Address</label>
+          <input type="text" id="mfAddress" value="${m.address||''}">
+        </div>
+        ${editing ? `
+        <div>
+          <label>Status</label>
+          <select id="mfStatus">
+            <option ${m.status==='Active'?'selected':''}>Active</option>
+            <option ${m.status==='Suspended'?'selected':''}>Suspended</option>
+            <option ${m.status==='Inactive'?'selected':''}>Inactive</option>
+          </select>
+        </div>` : ''}
+      </div>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-ghost" id="mfCancel">Cancel</button>
+        <button type="submit" class="btn btn-primary">${editing?'Save Changes':'Add Member'}</button>
+      </div>
+    </form>
+  `);
+  $('#mfCancel').onclick = closeModal;
+  $('#memberForm').addEventListener('submit', async (e)=>{
+    e.preventDefault();
+    const mobile = $('#mfMobile').value.trim();
+    const payload = {
+      name: $('#mfName').value.trim(),
+      fatherHusbandName: $('#mfFatherHusband').value.trim(),
+      dob: $('#mfDob').value,
+      mobile,
+      address: $('#mfAddress').value.trim(),
+      joinedDate: $('#mfJoined').value
+    };
+    try{
+      if(editing){
+        payload.status = $('#mfStatus').value;
+        await db.collection('members').doc(memberId).update(payload);
+        toast('Member updated', 'success');
+        closeModal();
+        await renderMembersTable();
+      }else{
+        const last5 = mobile.slice(-5);
+        if(last5.length < 5){ toast('Mobile number must be at least 5 digits.', 'error'); return; }
+        const cred = await secondaryAuth.createUserWithEmailAndPassword(toEmail(last5), last5);
+        const uid = cred.user.uid;
+        await secondaryAuth.signOut();
+        payload.status = 'Active';
+        payload.mustChangePassword = true;
+        payload.createdAt = firebase.firestore.FieldValue.serverTimestamp();
+        await db.collection('members').doc(uid).set(payload);
+        closeModal();
+        toast('Member added', 'success');
+        await renderMembersTable();
+        openModal(`
+          <h2>Member Added</h2>
+          <p>Share these login details with <b>${payload.name}</b>:</p>
+          <div class="cred-slip">
+            User ID: <b>${last5}</b><br>
+            Temporary Password: <b>${last5}</b>
+          </div>
+          <p class="muted small">They'll be asked to set their own password on first login.</p>
+          <div class="modal-actions"><button class="btn btn-primary" id="credOk">Done</button></div>
+        `);
+        $('#credOk').onclick = closeModal;
+      }
+    }catch(err){
+      toast(err.message, 'error');
+    }
+  });
+}
+
+async function openMemberDetail(memberId){
+  const m = state.membersCache.find(x=>x.id===memberId);
+  openModal(`
+    <h2>${m.name}</h2>
+    <p class="muted small">${m.mobile} · ${statusBadge(m.status||'Active')}</p>
+    <div class="tabs">
+      <button class="tab-btn active" data-tab="family">Family</button>
+      <button class="tab-btn" data-tab="payments">Payments</button>
+    </div>
+    <div class="tab-panel active" id="tab-family"><p class="muted small">Loading...</p></div>
+    <div class="tab-panel" id="tab-payments"><p class="muted small">Loading...</p></div>
+  `);
+  $all('.tab-btn').forEach(b=>{
+    b.onclick = ()=>{
+      $all('.tab-btn').forEach(x=>x.classList.remove('active'));
+      $all('.tab-panel').forEach(x=>x.classList.remove('active'));
+      b.classList.add('active');
+      document.getElementById('tab-'+b.dataset.tab).classList.add('active');
+    };
+  });
+  await loadFamilyTab(memberId);
+  await loadPaymentsTab(memberId);
+}
+
+/* ---------- Family sub-tab ---------- */
+async function loadFamilyTab(memberId){
+  const snap = await db.collection('members').doc(memberId).collection('family').get();
+  const panel = $('#tab-family');
+  let itemsHtml = snap.empty ? '<p class="muted small">No family members added yet.</p>' : '';
+  snap.forEach(doc=>{
+    const f = doc.data();
+    itemsHtml += `
+      <div class="subitem">
+        <span>${f.photoUrl?`<img src="${f.photoUrl}" style="width:28px;height:28px;border-radius:50%;object-fit:cover;vertical-align:middle;margin-right:8px;">`:''}
+        ${f.name} <span class="muted tiny">(${f.relationship||''}, ${fmtDate(f.dob)})</span></span>
+        <button data-id="${doc.id}" class="delFamily">Remove</button>
+      </div>`;
+  });
+  panel.innerHTML = itemsHtml + `
+    <form id="familyForm" style="margin-top:14px;">
+      <div class="form-grid">
+        <div><label>Name</label><input type="text" id="famName" required></div>
+        <div><label>Relationship</label><input type="text" id="famRel" placeholder="e.g. Spouse, Son, Daughter"></div>
+        <div><label>Date of Birth</label><input type="date" id="famDob"></div>
+        <div><label>Photo</label><input type="file" id="famPhoto" accept="image/*"></div>
+      </div>
+      <div class="modal-actions"><button type="submit" class="btn btn-secondary">+ Add Family Member</button></div>
+    </form>`;
+  $all('.delFamily').forEach(btn=>{
+    btn.onclick = async ()=>{
+      await db.collection('members').doc(memberId).collection('family').doc(btn.dataset.id).delete();
+      await loadFamilyTab(memberId);
+    };
+  });
+  $('#familyForm').onsubmit = async (e)=>{
+    e.preventDefault();
+    let photoUrl = '';
+    const file = $('#famPhoto').files[0];
+    try{
+      if(file){
+        const ref = storage.ref().child(`members/${memberId}/family/${Date.now()}_${file.name}`);
+        await ref.put(file);
+        photoUrl = await ref.getDownloadURL();
+      }
+      await db.collection('members').doc(memberId).collection('family').add({
+        name: $('#famName').value.trim(),
+        relationship: $('#famRel').value.trim(),
+        dob: $('#famDob').value,
+        photoUrl
+      });
+      toast('Family member added', 'success');
+      await loadFamilyTab(memberId);
+    }catch(err){ toast(err.message, 'error'); }
+  };
+}
+
+/* ---------- Payments sub-tab ---------- */
+async function loadPaymentsTab(memberId){
+  const snap = await db.collection('members').doc(memberId).collection('payments')
+    .orderBy('date','desc').get();
+  const panel = $('#tab-payments');
+  let rows = snap.empty ? '<p class="muted small">No payments recorded yet.</p>' : `
+    <table class="data-table"><thead><tr><th>Date</th><th>Description</th><th>Amount</th><th>Mode</th><th>Status</th></tr></thead><tbody>`;
+  snap.forEach(doc=>{
+    const p = doc.data();
+    if(!snap.empty){
+      rows += `<tr>
+        <td>${fmtDate(p.date)}</td><td>${p.description||''}</td><td>${fmtMoney(p.amount)}</td>
+        <td>${p.mode}</td><td>${p.confirmed?'✅ Confirmed':'⏳ Pending'}</td>
+      </tr>`;
+    }
+  });
+  if(!snap.empty) rows += '</tbody></table>';
+  panel.innerHTML = rows + `
+    <form id="paymentForm" style="margin-top:14px;">
+      <div class="form-grid">
+        <div><label>Date</label><input type="date" id="payDate" required value="${new Date().toISOString().slice(0,10)}"></div>
+        <div><label>Amount</label><input type="number" id="payAmount" min="1" required></div>
+        <div class="full"><label>Description</label><input type="text" id="payDesc" placeholder="e.g. October membership"></div>
+        <div>
+          <label>Mode</label>
+          <select id="payMode">
+            <option value="Cash">Cash</option>
+            <option value="Online">Online</option>
+          </select>
+        </div>
+        <div id="payConfirmWrap" class="hidden">
+          <label>Payment Confirmed? <span class="tooltip" data-tip="Check this only after you've verified the money actually arrived (bank/UPI app).">?</span></label>
+          <select id="payConfirmed"><option value="no">Not yet</option><option value="yes">Yes, confirmed</option></select>
+        </div>
+      </div>
+      <div class="modal-actions"><button type="submit" class="btn btn-secondary">+ Add Payment</button></div>
+    </form>`;
+  $('#payMode').onchange = (e)=>{
+    $('#payConfirmWrap').classList.toggle('hidden', e.target.value!=='Online');
+  };
+  $('#paymentForm').onsubmit = async (e)=>{
+    e.preventDefault();
+    const mode = $('#payMode').value;
+    const confirmed = mode==='Cash' ? true : ($('#payConfirmed').value==='yes');
+    const date = $('#payDate').value;
+    try{
+      await db.collection('members').doc(memberId).collection('payments').add({
+        date, description: $('#payDesc').value.trim(),
+        amount: Number($('#payAmount').value), mode, confirmed,
+        monthKey: monthKey(new Date(date))
+      });
+      await recalcMemberStatus(memberId);
+      toast('Payment recorded', 'success');
+      await loadPaymentsTab(memberId);
+    }catch(err){ toast(err.message, 'error'); }
+  };
+}
+
+async function recalcMemberStatus(memberId){
+  const s = state.settings;
+  const paySnap = await db.collection('members').doc(memberId).collection('payments')
+    .where('confirmed','==',true).orderBy('date','desc').limit(1).get();
+  let status = 'Active';
+  const now = new Date();
+  if(paySnap.empty){
+    status = 'Suspended'; // no confirmed payment on record at all yet -> flag for review, not auto-Inactive
+  }else{
+    const lastPaid = new Date(paySnap.docs[0].data().date);
+    const gap = monthsBetween(lastPaid, now);
+    if(gap >= (s.inactiveMonths||5)) status = 'Inactive';
+    else if(gap >= (s.suspendMonths||2)) status = 'Suspended';
+    else status = 'Active';
+  }
+  await db.collection('members').doc(memberId).update({ status });
+}
+
+
+/* =========================================================
+   EXPENSES
+   ========================================================= */
+
+function wireExpenseModule(){
+  $('#addExpenseBtn').onclick = ()=>{
+    openModal(`
+      <h2>Add Expense</h2>
+      <form id="expenseForm">
+        <div class="form-grid">
+          <div><label>Date</label><input type="date" id="expDate" required value="${new Date().toISOString().slice(0,10)}"></div>
+          <div><label>Amount</label><input type="number" id="expAmount" min="1" required></div>
+          <div class="full"><label>Description</label><input type="text" id="expDesc" required></div>
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="btn btn-ghost" id="expCancel">Cancel</button>
+          <button type="submit" class="btn btn-primary">Add Expense</button>
+        </div>
+      </form>`);
+    $('#expCancel').onclick = closeModal;
+    $('#expenseForm').onsubmit = async (e)=>{
+      e.preventDefault();
+      await db.collection('expenses').add({
+        date: $('#expDate').value,
+        description: $('#expDesc').value.trim(),
+        amount: Number($('#expAmount').value)
+      });
+      closeModal();
+      toast('Expense added', 'success');
+      await renderExpensesTable();
+    };
+  };
+}
+
+async function renderExpensesTable(){
+  const snap = await db.collection('expenses').orderBy('date','desc').get();
+  const body = $('#expensesTableBody');
+  body.innerHTML = '';
+  snap.forEach(doc=>{
+    const x = doc.data();
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${fmtDate(x.date)}</td><td>${x.description}</td><td>${fmtMoney(x.amount)}</td>
+      <td class="row-actions"><button data-act="del">Delete</button></td>`;
+    tr.querySelector('[data-act="del"]').onclick = async ()=>{
+      await db.collection('expenses').doc(doc.id).delete();
+      await renderExpensesTable();
+    };
+    body.appendChild(tr);
+  });
+}
+
+/* =========================================================
+   REPORTS  (PDF via browser print - renders Tamil correctly
+   since it uses the live page font, unlike most JS PDF libs)
+   ========================================================= */
+
+function wireReportModule(){
+  $all('.report-card').forEach(btn=>{
+    btn.onclick = ()=> runReport(btn.dataset.report);
+  });
+}
+
+function printReport(title, subtitle, tableHtml){
+  let area = document.getElementById('printArea');
+  if(!area){
+    area = document.createElement('div');
+    area.id = 'printArea';
+    document.body.appendChild(area);
+  }
+  area.innerHTML = `<h1>${title}</h1><p class="print-sub">${subtitle}</p>${tableHtml}`;
+  area.classList.add('showing');
+  window.print();
+  setTimeout(()=> area.classList.remove('showing'), 500);
+}
+
+async function runReport(type){
+  const s = state.settings;
+  const churchLine = `${s.nameEn || ''} ${s.nameTa ? '· ' + s.nameTa : ''} — Generated ${fmtDate(new Date())}`;
+
+  if(type==='members'){
+    const rows = state.membersCache.map(m=>`
+      <tr><td>${m.name}</td><td>${m.mobile}</td><td>${m.status}</td><td>${fmtDate(m.joinedDate)}</td></tr>`).join('');
+    printReport('Member Entry Report', churchLine,
+      `<table><thead><tr><th>Name</th><th>Mobile</th><th>Status</th><th>Joined</th></tr></thead><tbody>${rows}</tbody></table>`);
+  }
+
+  if(type==='family'){
+    let rows = '';
+    for(const m of state.membersCache){
+      const famSnap = await db.collection('members').doc(m.id).collection('family').get();
+      if(famSnap.empty){ rows += `<tr><td>${m.name}</td><td colspan="3" class="muted">No family details</td></tr>`; continue; }
+      famSnap.forEach(doc=>{
+        const f = doc.data();
+        rows += `<tr><td>${m.name}</td><td>${f.name}</td><td>${f.relationship||''}</td><td>${fmtDate(f.dob)}</td></tr>`;
+      });
+    }
+    printReport('Family Details Report', churchLine,
+      `<table><thead><tr><th>Member</th><th>Family Member</th><th>Relationship</th><th>DOB</th></tr></thead><tbody>${rows}</tbody></table>`);
+  }
+
+  if(type==='pending'){
+    const curMonth = monthKey(new Date());
+    let rows = '';
+    for(const m of state.membersCache){
+      const paySnap = await db.collection('members').doc(m.id).collection('payments')
+        .where('monthKey','==',curMonth).where('confirmed','==',true).limit(1).get();
+      if(paySnap.empty){
+        rows += `<tr><td>${m.name}</td><td>${m.mobile}</td><td>${m.status}</td></tr>`;
+      }
+    }
+    printReport('Pending Payments Report — This Month', churchLine,
+      `<table><thead><tr><th>Name</th><th>Mobile</th><th>Status</th></tr></thead><tbody>${rows || '<tr><td colspan="3">Everyone has paid this month 🎉</td></tr>'}</tbody></table>`);
+  }
+
+  if(type==='mypayments'){
+    const snap = await db.collection('members').doc(state.uid).collection('payments').orderBy('date','desc').get();
+    const rows = snap.docs.map(d=>{
+      const p = d.data();
+      return `<tr><td>${fmtDate(p.date)}</td><td>${p.description||''}</td><td>${fmtMoney(p.amount)}</td><td>${p.mode}</td><td>${p.confirmed?'Confirmed':'Pending'}</td></tr>`;
+    }).join('');
+    printReport('My Payment History', `${state.memberDoc.name} — Generated ${fmtDate(new Date())}`,
+      `<table><thead><tr><th>Date</th><th>Description</th><th>Amount</th><th>Mode</th><th>Status</th></tr></thead><tbody>${rows || '<tr><td colspan="5">No payments yet</td></tr>'}</tbody></table>`);
+  }
+}
+
+/* =========================================================
+   SETTINGS
+   ========================================================= */
+
+function wireSettingsModule(){
+  $('#setLogoFile').onchange = ()=>{
+    const file = $('#setLogoFile').files[0];
+    if(file){
+      const reader = new FileReader();
+      reader.onload = ()=>{ $('#setLogoPreview').src = reader.result; show($('#setLogoPreview')); };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  $('#saveChurchBtn').onclick = async ()=>{
+    try{
+      const updates = {
+        nameEn: $('#setNameEn').value.trim(),
+        nameTa: $('#setNameTa').value.trim(),
+        tagline: $('#setTagline').value.trim()
+      };
+      const file = $('#setLogoFile').files[0];
+      if(file){
+        const ref = storage.ref().child(`settings/logo_${Date.now()}_${file.name}`);
+        await ref.put(file);
+        updates.logoUrl = await ref.getDownloadURL();
+      }
+      await db.collection('settings').doc('public').update(updates);
+      Object.assign(state.settings, updates);
+      toast('Church details saved', 'success');
+      enterApp();
+    }catch(err){ toast(err.message, 'error'); }
+  };
+
+  $('#saveThemeBtn').onclick = async ()=>{
+    const theme = { primary: $('#setPrimaryColor').value, accent: $('#setAccentColor').value };
+    await db.collection('settings').doc('public').update({ theme });
+    state.settings.theme = theme;
+    applyTheme(theme);
+    toast('Theme applied', 'success');
+  };
+
+  $('#savePastorBtn').onclick = async ()=>{
+    const pastorName = $('#setPastorName').value.trim();
+    await db.collection('settings').doc('public').update({ pastorName });
+    state.settings.pastorName = pastorName;
+    toast('Pastor name saved', 'success');
+  };
+
+  $('#saveRulesBtn').onclick = async ()=>{
+    const suspendMonths = Number($('#setSuspendMonths').value)||2;
+    const inactiveMonths = Number($('#setInactiveMonths').value)||5;
+    await db.collection('settings').doc('public').update({ suspendMonths, inactiveMonths });
+    state.settings.suspendMonths = suspendMonths;
+    state.settings.inactiveMonths = inactiveMonths;
+    toast('Status rules saved', 'success');
+  };
+
+  $('#addEventBtn').onclick = async ()=>{
+    const title = $('#newEventTitle').value.trim();
+    const date = $('#newEventDate').value;
+    if(!title || !date){ toast('Enter an event title and date', 'error'); return; }
+    const events = (state.settings.events||[]).concat([{title, date}]);
+    await db.collection('settings').doc('public').update({ events });
+    state.settings.events = events;
+    $('#newEventTitle').value=''; $('#newEventDate').value='';
+    populateSettingsForm();
+    toast('Event added', 'success');
+  };
+}
+
+function populateSettingsForm(){
+  const s = state.settings;
+  $('#setNameEn').value = s.nameEn||'';
+  $('#setNameTa').value = s.nameTa||'';
+  $('#setTagline').value = s.tagline||'';
+  if(s.logoUrl){ $('#setLogoPreview').src = s.logoUrl; show($('#setLogoPreview')); }
+  $('#setPrimaryColor').value = (s.theme&&s.theme.primary) || '#1E3A5F';
+  $('#setAccentColor').value = (s.theme&&s.theme.accent) || '#C9A227';
+  $('#setPastorName').value = s.pastorName||'';
+  $('#setSuspendMonths').value = s.suspendMonths||2;
+  $('#setInactiveMonths').value = s.inactiveMonths||5;
+
+  const list = $('#eventEditList');
+  list.innerHTML = '';
+  (s.events||[]).forEach((ev,i)=>{
+    const div = document.createElement('div');
+    div.className = 'subitem';
+    div.innerHTML = `<span>${ev.title} — ${fmtDate(ev.date)}</span><button data-i="${i}">Remove</button>`;
+    div.querySelector('button').onclick = async ()=>{
+      const events = s.events.slice(); events.splice(i,1);
+      await db.collection('settings').doc('public').update({ events });
+      state.settings.events = events;
+      populateSettingsForm();
+    };
+    list.appendChild(div);
+  });
+}
+
+/* =========================================================
+   ADMIN MANAGEMENT (primary admin only)
+   ========================================================= */
+
+function wireAdminModule(){
+  $('#addAdminBtn').onclick = ()=>{
+    openModal(`
+      <h2>Add Admin</h2>
+      <form id="adminForm">
+        <div class="form-grid">
+          <div class="full"><label>Name</label><input type="text" id="adName" required></div>
+          <div><label>User ID</label><input type="text" id="adUserId" required autocomplete="off"></div>
+          <div><label>Temporary Password</label><input type="password" id="adPassword" required minlength="6"></div>
+        </div>
+        <p class="muted small" style="margin-top:10px;">Permissions:</p>
+        <label><input type="checkbox" id="permMembers" checked> Manage Members</label><br>
+        <label><input type="checkbox" id="permExpenses" checked> Manage Expenses</label><br>
+        <label><input type="checkbox" id="permSettings"> Manage Settings</label>
+        <div class="modal-actions">
+          <button type="button" class="btn btn-ghost" id="adCancel">Cancel</button>
+          <button type="submit" class="btn btn-primary">Create Admin</button>
+        </div>
+      </form>`);
+    $('#adCancel').onclick = closeModal;
+    $('#adminForm').onsubmit = async (e)=>{
+      e.preventDefault();
+      try{
+        const userId = $('#adUserId').value.trim();
+        const password = $('#adPassword').value;
+        const cred = await secondaryAuth.createUserWithEmailAndPassword(toEmail(userId), password);
+        const uid = cred.user.uid;
+        await secondaryAuth.signOut();
+        await db.collection('admins').doc(uid).set({
+          name: $('#adName').value.trim(), userId, role:'secondary',
+          permissions:{
+            members: $('#permMembers').checked,
+            expenses: $('#permExpenses').checked,
+            settings: $('#permSettings').checked
+          },
+          mustChangePassword: true,
+          createdAt: firebase.firestore.FieldValue.serverTimestamp()
+        });
+        closeModal();
+        toast('Admin account created', 'success');
+        await renderAdminsTable();
+      }catch(err){ toast(err.message, 'error'); }
+    };
+  };
+}
+
+async function renderAdminsTable(){
+  const snap = await db.collection('admins').get();
+  state.adminsCache = snap.docs.map(d=>({id:d.id, ...d.data()}));
+  const body = $('#adminsTableBody');
+  body.innerHTML = '';
+  state.adminsCache.forEach(a=>{
+    const perms = a.role==='primary' ? 'All' : Object.entries(a.permissions||{}).filter(([,v])=>v).map(([k])=>k).join(', ') || 'None';
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${a.name}</td><td>${a.userId||''}</td><td>${a.role}</td><td>${perms}</td>
+      <td class="row-actions">${a.role!=='primary' ? '<button data-act="del">Remove</button>' : ''}</td>`;
+    if(a.role!=='primary'){
+      tr.querySelector('[data-act="del"]').onclick = async ()=>{
+        // Note: this removes the Firestore profile (revoking app access) but cannot delete
+        // the underlying Firebase Auth account from client-side code - that needs the
+        // Admin SDK (a Cloud Function), which is a further step beyond this file.
+        await db.collection('admins').doc(a.id).delete();
+        toast('Admin access revoked. (Their sign-in account itself still exists in Firebase Auth - remove it manually in the Firebase console if needed.)', 'success');
+        await renderAdminsTable();
+      };
+    }
+    body.appendChild(tr);
+  });
+}
+
+</script>
+</body>
+</html>
