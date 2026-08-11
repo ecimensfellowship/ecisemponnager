@@ -1173,8 +1173,12 @@ function openMemberForm(memberId){
         await renderMembersTable();
       }else{
         const last5 = mobile.slice(-5);
-        if(last5.length < 5){ toast('Mobile number must be at least 5 digits.', 'error'); return; }
-        const cred = await secondaryAuth.createUserWithEmailAndPassword(toEmail(last5), last5);
+        // Firebase Auth requires passwords of at least 6 characters, so the temporary
+        // password uses the last 6 digits (still simple to convey) while the User ID
+        // stays at 5 digits as requested.
+        const last6 = mobile.slice(-6);
+        if(last6.length < 6){ toast('Mobile number must be at least 6 digits.', 'error'); return; }
+        const cred = await secondaryAuth.createUserWithEmailAndPassword(toEmail(last5), last6);
         const uid = cred.user.uid;
         await secondaryAuth.signOut();
         payload.status = 'Active';
@@ -1188,8 +1192,8 @@ function openMemberForm(memberId){
           <h2>Member Added</h2>
           <p>Share these login details with <b>${payload.name}</b>:</p>
           <div class="cred-slip">
-            User ID: <b>${last5}</b><br>
-            Temporary Password: <b>${last5}</b>
+            User ID: <b>${last5}</b> <span class="muted tiny">(last 5 digits of mobile)</span><br>
+            Temporary Password: <b>${last6}</b> <span class="muted tiny">(last 6 digits of mobile)</span>
           </div>
           <p class="muted small">They'll be asked to set their own password on first login.</p>
           <div class="modal-actions"><button class="btn btn-primary" id="credOk">Done</button></div>
