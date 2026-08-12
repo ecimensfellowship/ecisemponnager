@@ -93,11 +93,12 @@ body{
   background:var(--color-primary);
   border-radius:50% 50% 4px 4px / 60% 60% 4px 4px;
   box-shadow:var(--shadow);
+  display:flex;align-items:center;justify-content:center;
+  overflow:hidden;
 }
-.logo-login{
-  width:56px;height:56px;object-fit:contain;
-  margin:0 auto 4px;
-  display:block;
+.arch-logo-img{
+  width:80%;height:80%;object-fit:contain;
+  display:none; /* shown once a src is set */
 }
 .church-title-ta{
   font-family:var(--font-tamil);
@@ -368,7 +369,7 @@ button:focus-visible, input:focus-visible, a:focus-visible{
 <!-- ================= BOOTSTRAP (first run: create primary admin) ================= -->
 <div id="bootstrapScreen" class="full-screen-center hidden">
   <form id="bootstrapForm" class="auth-card arch-card">
-    <div class="arch-card-top"></div>
+    <div class="arch-card-top"><img class="arch-logo-img" alt="" /></div>
     <h1 class="church-title-ta">கொர்நேலியு ஆண்கள் ஐக்கியம்</h1>
     <h2 class="church-title-en">Evangelical Church of India — First-Time Setup</h2>
     <p class="muted small">No admin account exists yet. Create the primary administrator account to get started.</p>
@@ -390,8 +391,7 @@ button:focus-visible, input:focus-visible, a:focus-visible{
 <!-- ================= LOGIN ================= -->
 <div id="loginScreen" class="full-screen-center hidden">
   <form id="loginForm" class="auth-card arch-card">
-    <div class="arch-card-top"></div>
-    <img id="loginLogo" src="" alt="Church logo" class="logo-login hidden" />
+    <div class="arch-card-top"><img class="arch-logo-img" alt="" /></div>
     <h1 id="loginChurchNameTa" class="church-title-ta"></h1>
     <h2 id="loginChurchNameEn" class="church-title-en"></h2>
     <p id="loginTagline" class="muted small"></p>
@@ -411,7 +411,7 @@ button:focus-visible, input:focus-visible, a:focus-visible{
 <!-- ================= FORCE PASSWORD CHANGE ================= -->
 <div id="forcePwScreen" class="full-screen-center hidden">
   <form id="forcePwForm" class="auth-card arch-card">
-    <div class="arch-card-top"></div>
+    <div class="arch-card-top"><img class="arch-logo-img" alt="" /></div>
     <h2 class="church-title-en">Set a New Password</h2>
     <p class="muted small">You're using a temporary password. Please set your own before continuing.</p>
     <label>New Password</label>
@@ -743,9 +743,17 @@ function showOnly(id){
    BOOTSTRAP / AUTH FLOW
    ========================================================= */
 
+function setArchLogos(src){
+  $all('.arch-logo-img').forEach(img=>{
+    img.src = src;
+    img.style.display = src ? 'block' : 'none';
+  });
+}
+
 async function checkBootstrapAndSettings(){
   const snap = await db.collection('settings').doc('public').get();
   if(!snap.exists){
+    setArchLogos(DEFAULT_LOGO);
     showOnly('bootstrapScreen');
     return null;
   }
@@ -871,8 +879,7 @@ function applySettingsToLoginScreen(settings){
   $('#loginTagline').textContent = settings.tagline || '';
   const logo = settings.logoUrl || DEFAULT_LOGO;
   $('#loadingLogo').src = logo;
-  $('#loginLogo').src = logo;
-  show($('#loginLogo'));
+  setArchLogos(logo);
 }
 
 function applyTheme(theme){
