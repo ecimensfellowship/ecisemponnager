@@ -732,7 +732,9 @@ function openModal(innerHtml){
       </div>
     </div>`;
   $('#activeModalClose').addEventListener('click', closeModal);
-  $('#activeOverlay').addEventListener('click', (e)=>{ if(e.target.id==='activeOverlay') closeModal(); });
+  // Deliberately no "click outside to close" behavior - popups only close via
+  // the X button or a form's own Cancel/Done button, since accidental taps
+  // (especially on dropdowns and date pickers on mobile) were closing them.
 }
 function closeModal(){ $('#modalRoot').innerHTML = ''; }
 
