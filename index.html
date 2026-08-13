@@ -284,7 +284,7 @@ body{
 }
 .modal-box{
   background:var(--color-surface);border-radius:14px;
-  width:100%;max-width:520px;max-height:90vh;overflow-y:auto;
+  width:100%;max-width:640px;max-height:90vh;overflow-y:auto;
   padding:24px;position:relative;box-shadow:var(--shadow-lg);
 }
 .modal-close{
@@ -571,10 +571,15 @@ button:focus-visible, input:focus-visible, a:focus-visible{
             <input type="text" id="setNameTa" lang="ta" />
             <label>Tagline</label>
             <input type="text" id="setTagline" />
-            <label>Logo <span class="tooltip" data-tip="Upload a square image, ideally under 500KB.">?</span></label>
+            <button class="btn btn-secondary" id="saveChurchBtn">Save Church Details</button>
+          </div>
+
+          <div class="card settings-card primary-admin-only">
+            <h3>Church Logo <span class="tooltip" data-tip="Only the primary admin can change the church logo.">?</span></h3>
+            <label>Upload New Logo <span class="tooltip" data-tip="Upload a square image, ideally under 500KB.">?</span></label>
             <input type="file" id="setLogoFile" accept="image/*" />
             <img id="setLogoPreview" class="logo-preview hidden" />
-            <button class="btn btn-secondary" id="saveChurchBtn">Save Church Details</button>
+            <button class="btn btn-secondary" id="saveLogoBtn">Update Logo</button>
           </div>
 
           <div class="card settings-card">
@@ -1121,11 +1126,43 @@ function filterMembersTable(q){
         <td class="row-actions">
           <button data-act="view">View</button>
           <button data-act="edit">Edit</button>
+          ${state.role==='primary' ? '<button data-act="del" style="color:var(--color-danger);">Delete</button>' : ''}
         </td>`;
       tr.querySelector('[data-act="view"]').onclick = ()=> openMemberDetail(m.id);
       tr.querySelector('[data-act="edit"]').onclick = ()=> openMemberForm(m.id);
+      const delBtn = tr.querySelector('[data-act="del"]');
+      if(delBtn) delBtn.onclick = ()=> confirmDeleteMember(m);
       body.appendChild(tr);
     });
+}
+
+async function deleteSubcollection(memberId, subName){
+  const snap = await db.collection('members').doc(memberId).collection(subName).get();
+  const deletes = snap.docs.map(d=> d.ref.delete());
+  await Promise.all(deletes);
+}
+
+function confirmDeleteMember(m){
+  openModal(`
+    <h2>Delete Member?</h2>
+    <p>This permanently removes <b>${m.name}</b>, along with their family details and payment history. This cannot be undone.</p>
+    <p class="muted small">Note: their sign-in account itself stays in Firebase Authentication (deleting that needs the Firebase console, since it's outside what a static site can do) - so if you re-add someone with the same mobile number later, do so with a slightly different User ID, or remove the old Auth account first.</p>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" id="delCancel">Cancel</button>
+      <button class="btn btn-danger" id="delConfirm">Delete Member</button>
+    </div>
+  `);
+  $('#delCancel').onclick = closeModal;
+  $('#delConfirm').onclick = async ()=>{
+    try{
+      await deleteSubcollection(m.id, 'family');
+      await deleteSubcollection(m.id, 'payments');
+      await db.collection('members').doc(m.id).delete();
+      closeModal();
+      toast('Member deleted', 'success');
+      await renderMembersTable();
+    }catch(err){ toast(err.message, 'error'); }
+  };
 }
 
 function openMemberForm(memberId){
@@ -1254,6 +1291,11 @@ async function openMemberDetail(memberId){
 }
 
 /* ---------- Family sub-tab ---------- */
+const RELATIONSHIP_OPTIONS = [
+  'Spouse','Son','Daughter','Father','Mother','Brother','Sister',
+  'Father-in-law','Mother-in-law','Grandfather','Grandmother','Other'
+];
+
 async function loadFamilyTab(memberId){
   const snap = await db.collection('members').doc(memberId).collection('family').get();
   const panel = $('#tab-family');
@@ -1264,14 +1306,21 @@ async function loadFamilyTab(memberId){
       <div class="subitem">
         <span>${f.photoUrl?`<img src="${f.photoUrl}" style="width:28px;height:28px;border-radius:50%;object-fit:cover;vertical-align:middle;margin-right:8px;">`:''}
         ${f.name} <span class="muted tiny">(${f.relationship||''}, ${fmtDate(f.dob)})</span></span>
-        <button data-id="${doc.id}" class="delFamily">Remove</button>
+        ${state.role==='primary' ? `<button data-id="${doc.id}" class="delFamily" style="color:var(--color-danger);">Remove</button>` : ''}
       </div>`;
   });
+  const relOptions = RELATIONSHIP_OPTIONS.map(r=>`<option value="${r}">${r}</option>`).join('');
   panel.innerHTML = itemsHtml + `
     <form id="familyForm" style="margin-top:14px;">
       <div class="form-grid">
         <div><label>Name</label><input type="text" id="famName" required></div>
-        <div><label>Relationship</label><input type="text" id="famRel" placeholder="e.g. Spouse, Son, Daughter"></div>
+        <div>
+          <label>Relationship</label>
+          <select id="famRel" required>
+            <option value="" disabled selected>Select relationship</option>
+            ${relOptions}
+          </select>
+        </div>
         <div><label>Date of Birth</label><input type="date" id="famDob"></div>
         <div><label>Photo</label><input type="file" id="famPhoto" accept="image/*"></div>
       </div>
@@ -1305,28 +1354,50 @@ async function loadFamilyTab(memberId){
   };
 }
 
+/* =========================================================
+   PAYMENTS
+   ========================================================= */
+
+const PAYMENT_CATEGORIES = [
+  'Subscription / சந்தா',
+  'Tithe / தசமபாகம்',
+  'Offering of Praise / ஸ்தோத்திர காணிக்கை',
+  'Thanksgiving Offering / நன்றி காணிக்கை',
+  'Bag Offering / பை காணிக்கை',
+  'Building Fund / கட்டிட நிதி'
+];
+
 /* ---------- Payments sub-tab ---------- */
 async function loadPaymentsTab(memberId){
   const snap = await db.collection('members').doc(memberId).collection('payments')
     .orderBy('date','desc').get();
   const panel = $('#tab-payments');
   let rows = snap.empty ? '<p class="muted small">No payments recorded yet.</p>' : `
-    <table class="data-table"><thead><tr><th>Date</th><th>Description</th><th>Amount</th><th>Mode</th><th>Status</th></tr></thead><tbody>`;
+    <div class="table-wrap"><table class="data-table"><thead><tr><th>Date</th><th>Category</th><th>Description</th><th>Amount</th><th>Mode</th><th>Status</th><th></th></tr></thead><tbody>`;
   snap.forEach(doc=>{
     const p = doc.data();
     if(!snap.empty){
       rows += `<tr>
-        <td>${fmtDate(p.date)}</td><td>${p.description||''}</td><td>${fmtMoney(p.amount)}</td>
+        <td>${fmtDate(p.date)}</td><td>${p.category||''}</td><td>${p.description||''}</td><td>${fmtMoney(p.amount)}</td>
         <td>${p.mode}</td><td>${p.confirmed?'✅ Confirmed':'⏳ Pending'}</td>
+        <td><button data-id="${doc.id}" class="delPayment" style="color:var(--color-danger);">Delete</button></td>
       </tr>`;
     }
   });
-  if(!snap.empty) rows += '</tbody></table>';
+  if(!snap.empty) rows += '</tbody></table></div>';
+  const categoryOptions = PAYMENT_CATEGORIES.map(c=>`<option value="${c}">${c}</option>`).join('');
   panel.innerHTML = rows + `
     <form id="paymentForm" style="margin-top:14px;">
       <div class="form-grid">
         <div><label>Date</label><input type="date" id="payDate" required value="${new Date().toISOString().slice(0,10)}"></div>
         <div><label>Amount</label><input type="number" id="payAmount" min="1" required></div>
+        <div class="full">
+          <label>Category</label>
+          <select id="payCategory" required lang="ta">
+            <option value="" disabled selected>Select a category</option>
+            ${categoryOptions}
+          </select>
+        </div>
         <div class="full"><label>Description</label><input type="text" id="payDesc" placeholder="e.g. October membership"></div>
         <div>
           <label>Mode</label>
@@ -1342,6 +1413,14 @@ async function loadPaymentsTab(memberId){
       </div>
       <div class="modal-actions"><button type="submit" class="btn btn-secondary">+ Add Payment</button></div>
     </form>`;
+  $all('.delPayment').forEach(btn=>{
+    btn.onclick = async ()=>{
+      await db.collection('members').doc(memberId).collection('payments').doc(btn.dataset.id).delete();
+      await recalcMemberStatus(memberId);
+      toast('Payment deleted', 'success');
+      await loadPaymentsTab(memberId);
+    };
+  });
   $('#payMode').onchange = (e)=>{
     $('#payConfirmWrap').classList.toggle('hidden', e.target.value!=='Online');
   };
@@ -1353,6 +1432,7 @@ async function loadPaymentsTab(memberId){
     try{
       await db.collection('members').doc(memberId).collection('payments').add({
         date, description: $('#payDesc').value.trim(),
+        category: $('#payCategory').value,
         amount: Number($('#payAmount').value), mode, confirmed,
         monthKey: monthKey(new Date(date))
       });
@@ -1500,10 +1580,10 @@ async function runReport(type){
     const snap = await db.collection('members').doc(state.uid).collection('payments').orderBy('date','desc').get();
     const rows = snap.docs.map(d=>{
       const p = d.data();
-      return `<tr><td>${fmtDate(p.date)}</td><td>${p.description||''}</td><td>${fmtMoney(p.amount)}</td><td>${p.mode}</td><td>${p.confirmed?'Confirmed':'Pending'}</td></tr>`;
+      return `<tr><td>${fmtDate(p.date)}</td><td>${p.category||''}</td><td>${p.description||''}</td><td>${fmtMoney(p.amount)}</td><td>${p.mode}</td><td>${p.confirmed?'Confirmed':'Pending'}</td></tr>`;
     }).join('');
     printReport('My Payment History', `${state.memberDoc.name} — Generated ${fmtDate(new Date())}`,
-      `<table><thead><tr><th>Date</th><th>Description</th><th>Amount</th><th>Mode</th><th>Status</th></tr></thead><tbody>${rows || '<tr><td colspan="5">No payments yet</td></tr>'}</tbody></table>`);
+      `<table><thead><tr><th>Date</th><th>Category</th><th>Description</th><th>Amount</th><th>Mode</th><th>Status</th></tr></thead><tbody>${rows || '<tr><td colspan="6">No payments yet</td></tr>'}</tbody></table>`);
   }
 }
 
@@ -1528,15 +1608,24 @@ function wireSettingsModule(){
         nameTa: $('#setNameTa').value.trim(),
         tagline: $('#setTagline').value.trim()
       };
-      const file = $('#setLogoFile').files[0];
-      if(file){
-        const ref = storage.ref().child(`settings/logo_${Date.now()}_${file.name}`);
-        await ref.put(file);
-        updates.logoUrl = await ref.getDownloadURL();
-      }
       await db.collection('settings').doc('public').update(updates);
       Object.assign(state.settings, updates);
       toast('Church details saved', 'success');
+      enterApp();
+    }catch(err){ toast(err.message, 'error'); }
+  };
+
+  $('#saveLogoBtn').onclick = async ()=>{
+    if(state.role !== 'primary'){ toast('Only the primary admin can update the logo.', 'error'); return; }
+    const file = $('#setLogoFile').files[0];
+    if(!file){ toast('Choose an image first.', 'error'); return; }
+    try{
+      const ref = storage.ref().child(`settings/logo_${Date.now()}_${file.name}`);
+      await ref.put(file);
+      const logoUrl = await ref.getDownloadURL();
+      await db.collection('settings').doc('public').update({ logoUrl });
+      state.settings.logoUrl = logoUrl;
+      toast('Logo updated', 'success');
       enterApp();
     }catch(err){ toast(err.message, 'error'); }
   };
