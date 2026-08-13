@@ -440,6 +440,7 @@ button:focus-visible, input:focus-visible, a:focus-visible{
       <button class="nav-link admin-only" data-view="expenses">💸 <span>Expenses</span></button>
       <button class="nav-link" data-view="reports">📄 <span>Reports</span></button>
       <button class="nav-link admin-only" data-view="settings">⚙️ <span>Settings</span></button>
+      <button class="nav-link primary-admin-only" data-view="groupmgmt">🗂️ <span>Admin Groups</span></button>
       <button class="nav-link primary-admin-only" data-view="adminmgmt">🛡️ <span>Admin Accounts</span></button>
     </nav>
     <button id="logoutBtn" class="btn btn-ghost btn-block">Log Out</button>
@@ -516,7 +517,7 @@ button:focus-visible, input:focus-visible, a:focus-visible{
         <div class="table-wrap">
           <table class="data-table" id="membersTable">
             <thead>
-              <tr><th>Name</th><th>Mobile</th><th>Status</th><th>Joined</th><th></th></tr>
+              <tr><th>Name</th><th>Mobile</th><th>Group</th><th>Status</th><th>Joined</th><th></th></tr>
             </thead>
             <tbody id="membersTableBody"></tbody>
           </table>
@@ -619,6 +620,20 @@ button:focus-visible, input:focus-visible, a:focus-visible{
         </div>
       </section>
 
+      <!-- ADMIN GROUPS -->
+      <section id="view-groupmgmt" class="view hidden">
+        <div class="toolbar">
+          <h3 class="muted">Admin Groups <span class="tooltip" data-tip="Groups like 'Women's Club' or 'Men's Club'. Assign a secondary admin and a set of members to a group, and that admin will only see and manage that group's members and payments.">?</span></h3>
+          <button class="btn btn-primary" id="addGroupBtn">+ Add Group</button>
+        </div>
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead><tr><th>Group Name</th><th>Members</th><th></th></tr></thead>
+            <tbody id="groupsTableBody"></tbody>
+          </table>
+        </div>
+      </section>
+
       <!-- ADMIN MANAGEMENT -->
       <section id="view-adminmgmt" class="view hidden">
         <div class="toolbar">
@@ -627,7 +642,7 @@ button:focus-visible, input:focus-visible, a:focus-visible{
         </div>
         <div class="table-wrap">
           <table class="data-table">
-            <thead><tr><th>Name</th><th>User ID</th><th>Role</th><th>Permissions</th><th></th></tr></thead>
+            <thead><tr><th>Name</th><th>User ID</th><th>Role</th><th>Group</th><th>Permissions</th><th></th></tr></thead>
             <tbody id="adminsTableBody"></tbody>
           </table>
         </div>
@@ -685,7 +700,8 @@ const state = {
   memberDoc: null,
   settings: null,
   membersCache: [],
-  adminsCache: []
+  adminsCache: [],
+  groupsCache: []
 };
 
 /* ---------- Small utilities ---------- */
@@ -921,9 +937,16 @@ async function enterApp(){
   wireReportModule();
   wireSettingsModule();
   wireAdminModule();
+  wireGroupModule();
 
+  await loadGroups();
   await renderDashboard();
   switchView('dashboard');
+}
+
+async function loadGroups(){
+  const snap = await db.collection('groups').get();
+  state.groupsCache = snap.docs.map(d=>({id:d.id, ...d.data()}));
 }
 
 function applyRoleVisibility(){
@@ -965,7 +988,7 @@ function wireNav(){
 
 const VIEW_TITLES = {
   dashboard:'Dashboard', members:'Members', expenses:'Expenses',
-  reports:'Reports', settings:'Settings', adminmgmt:'Admin Accounts'
+  reports:'Reports', settings:'Settings', adminmgmt:'Admin Accounts', groupmgmt:'Admin Groups'
 };
 
 async function switchView(view){
@@ -978,6 +1001,7 @@ async function switchView(view){
   if(view==='expenses') await renderExpensesTable();
   if(view==='settings') populateSettingsForm();
   if(view==='adminmgmt') await renderAdminsTable();
+  if(view==='groupmgmt') await renderGroupsTable();
   if(view==='dashboard') await renderDashboard();
 }
 
@@ -1123,6 +1147,7 @@ function filterMembersTable(q){
       tr.innerHTML = `
         <td>${m.name||''}</td>
         <td>${m.mobile||''}</td>
+        <td>${m.groupName || '<span class="muted">Unassigned</span>'}</td>
         <td>${statusBadge(m.status||'Active')}</td>
         <td>${fmtDate(m.joinedDate)}</td>
         <td class="row-actions">
@@ -1170,6 +1195,28 @@ function confirmDeleteMember(m){
 function openMemberForm(memberId){
   const editing = !!memberId;
   const m = editing ? state.membersCache.find(x=>x.id===memberId) : {};
+
+  // Group field behavior:
+  // - Primary admin: full dropdown, can assign/reassign to any group (or leave unassigned).
+  // - Secondary admin WITH a group: locked silently to their own group, no choice shown.
+  // - Secondary admin with NO group: no group field shown at all (group feature unused for them).
+  let groupFieldHtml = '';
+  if(state.role==='primary'){
+    const groupOptions = state.groupsCache.map(g=>
+      `<option value="${g.id}" ${m.groupId===g.id?'selected':''}>${g.name}</option>`).join('');
+    groupFieldHtml = `
+      <div class="full">
+        <label>Admin Group <span class="tooltip" data-tip="Which admin group manages this member's records.">?</span></label>
+        <select id="mfGroup">
+          <option value="">Unassigned</option>
+          ${groupOptions}
+        </select>
+      </div>`;
+  } else if(state.adminDoc && state.adminDoc.groupId){
+    groupFieldHtml = `<input type="hidden" id="mfGroup" value="${state.adminDoc.groupId}">
+      <p class="muted small full">Group: <b>${state.adminDoc.groupName || ''}</b></p>`;
+  }
+
   openModal(`
     <h2>${editing ? 'Edit Member' : 'Add Member'}</h2>
     <form id="memberForm">
@@ -1198,6 +1245,7 @@ function openMemberForm(memberId){
           <label>Address</label>
           <input type="text" id="mfAddress" value="${m.address||''}">
         </div>
+        ${groupFieldHtml}
         ${editing ? `
         <div>
           <label>Status</label>
@@ -1218,13 +1266,18 @@ function openMemberForm(memberId){
   $('#memberForm').addEventListener('submit', async (e)=>{
     e.preventDefault();
     const mobile = $('#mfMobile').value.trim();
+    const groupEl = $('#mfGroup');
+    const groupId = groupEl ? (groupEl.value || null) : (m.groupId || null);
+    const group = state.groupsCache.find(g=>g.id===groupId);
     const payload = {
       name: $('#mfName').value.trim(),
       fatherHusbandName: $('#mfFatherHusband').value.trim(),
       dob: $('#mfDob').value,
       mobile,
       address: $('#mfAddress').value.trim(),
-      joinedDate: $('#mfJoined').value
+      joinedDate: $('#mfJoined').value,
+      groupId: groupId || null,
+      groupName: group ? group.name : (groupEl ? null : (m.groupName || null))
     };
     try{
       if(editing){
@@ -1724,11 +1777,80 @@ function populateSettingsForm(){
 }
 
 /* =========================================================
+   ADMIN GROUPS (primary admin only)
+   ========================================================= */
+
+function wireGroupModule(){
+  $('#addGroupBtn').onclick = ()=> openGroupForm(null);
+}
+
+async function renderGroupsTable(){
+  await loadGroups();
+  const body = $('#groupsTableBody');
+  body.innerHTML = '';
+  for(const g of state.groupsCache){
+    const countSnap = await db.collection('members').where('groupId','==',g.id).get();
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${g.name}</td><td>${countSnap.size}</td>
+      <td class="row-actions">
+        <button data-act="edit">Rename</button>
+        <button data-act="del" style="color:var(--color-danger);">Delete</button>
+      </td>`;
+    tr.querySelector('[data-act="edit"]').onclick = ()=> openGroupForm(g);
+    tr.querySelector('[data-act="del"]').onclick = async ()=>{
+      if(countSnap.size > 0){
+        toast(`Can't delete "${g.name}" - ${countSnap.size} member(s) are still assigned to it. Reassign them first.`, 'error');
+        return;
+      }
+      if(!confirm(`Delete the group "${g.name}"?`)) return;
+      try{
+        await db.collection('groups').doc(g.id).delete();
+        toast('Group deleted', 'success');
+        await renderGroupsTable();
+      }catch(err){ toast(err.message, 'error'); }
+    };
+    body.appendChild(tr);
+  }
+}
+
+function openGroupForm(group){
+  const editing = !!group;
+  openModal(`
+    <h2>${editing ? 'Rename Group' : 'Add Admin Group'}</h2>
+    <form id="groupForm">
+      <label>Group Name <span class="tooltip" data-tip="e.g. Women's Club, Men's Club, Youth Fellowship">?</span></label>
+      <input type="text" id="grpName" required value="${editing ? group.name : ''}" style="width:100%;padding:8px 10px;border:1px solid var(--color-border);border-radius:6px;">
+      <div class="modal-actions">
+        <button type="button" class="btn btn-ghost" id="grpCancel">Cancel</button>
+        <button type="submit" class="btn btn-primary">${editing ? 'Save' : 'Add Group'}</button>
+      </div>
+    </form>
+  `);
+  $('#grpCancel').onclick = closeModal;
+  $('#groupForm').onsubmit = async (e)=>{
+    e.preventDefault();
+    const name = $('#grpName').value.trim();
+    try{
+      if(editing){
+        await db.collection('groups').doc(group.id).update({ name });
+        toast('Group renamed', 'success');
+      }else{
+        await db.collection('groups').add({ name });
+        toast('Group added', 'success');
+      }
+      closeModal();
+      await renderGroupsTable();
+    }catch(err){ toast(err.message, 'error'); }
+  };
+}
+
+/* =========================================================
    ADMIN MANAGEMENT (primary admin only)
    ========================================================= */
 
 function wireAdminModule(){
   $('#addAdminBtn').onclick = ()=>{
+    const groupOptions = state.groupsCache.map(g=>`<option value="${g.id}">${g.name}</option>`).join('');
     openModal(`
       <h2>Add Admin</h2>
       <form id="adminForm">
@@ -1736,6 +1858,13 @@ function wireAdminModule(){
           <div class="full"><label>Name</label><input type="text" id="adName" required></div>
           <div><label>User ID</label><input type="text" id="adUserId" required autocomplete="off"></div>
           <div><label>Temporary Password</label><input type="password" id="adPassword" required minlength="6"></div>
+          <div class="full">
+            <label>Admin Group <span class="tooltip" data-tip="If assigned, this admin will only see and manage members in this group. Leave unassigned for no group restriction (still governed by the permissions below).">?</span></label>
+            <select id="adGroup">
+              <option value="">No group (unrestricted by group)</option>
+              ${groupOptions}
+            </select>
+          </div>
         </div>
         <p class="muted small" style="margin-top:10px;">Permissions:</p>
         <label><input type="checkbox" id="permMembers" checked> Manage Members</label><br>
@@ -1752,11 +1881,15 @@ function wireAdminModule(){
       try{
         const userId = $('#adUserId').value.trim();
         const password = $('#adPassword').value;
+        const groupId = $('#adGroup').value || null;
+        const group = state.groupsCache.find(g=>g.id===groupId);
         const cred = await secondaryAuth.createUserWithEmailAndPassword(toEmail(userId), password);
         const uid = cred.user.uid;
         await secondaryAuth.signOut();
         await db.collection('admins').doc(uid).set({
           name: $('#adName').value.trim(), userId, role:'secondary',
+          groupId: groupId || null,
+          groupName: group ? group.name : null,
           permissions:{
             members: $('#permMembers').checked,
             expenses: $('#permExpenses').checked,
@@ -1781,7 +1914,9 @@ async function renderAdminsTable(){
   state.adminsCache.forEach(a=>{
     const perms = a.role==='primary' ? 'All' : Object.entries(a.permissions||{}).filter(([,v])=>v).map(([k])=>k).join(', ') || 'None';
     const tr = document.createElement('tr');
-    tr.innerHTML = `<td>${a.name}</td><td>${a.userId||''}</td><td>${a.role}</td><td>${perms}</td>
+    tr.innerHTML = `<td>${a.name}</td><td>${a.userId||''}</td><td>${a.role}</td>
+      <td>${a.role==='primary' ? '<span class="muted">All groups</span>' : (a.groupName || '<span class="muted">Unassigned</span>')}</td>
+      <td>${perms}</td>
       <td class="row-actions">${a.role!=='primary' ? '<button data-act="del">Remove</button>' : ''}</td>`;
     if(a.role!=='primary'){
       tr.querySelector('[data-act="del"]').onclick = async ()=>{
