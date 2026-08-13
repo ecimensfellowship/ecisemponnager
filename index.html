@@ -1328,7 +1328,9 @@ async function loadFamilyTab(memberId){
     </form>`;
   $all('.delFamily').forEach(btn=>{
     btn.onclick = async ()=>{
+      if(!confirm('Remove this family member? This cannot be undone.')) return;
       await db.collection('members').doc(memberId).collection('family').doc(btn.dataset.id).delete();
+      toast('Family member removed', 'success');
       await loadFamilyTab(memberId);
     };
   });
@@ -1415,6 +1417,7 @@ async function loadPaymentsTab(memberId){
     </form>`;
   $all('.delPayment').forEach(btn=>{
     btn.onclick = async ()=>{
+      if(!confirm('Delete this payment record? This cannot be undone.')) return;
       await db.collection('members').doc(memberId).collection('payments').doc(btn.dataset.id).delete();
       await recalcMemberStatus(memberId);
       toast('Payment deleted', 'success');
@@ -1506,7 +1509,9 @@ async function renderExpensesTable(){
     tr.innerHTML = `<td>${fmtDate(x.date)}</td><td>${x.description}</td><td>${fmtMoney(x.amount)}</td>
       <td class="row-actions"><button data-act="del">Delete</button></td>`;
     tr.querySelector('[data-act="del"]').onclick = async ()=>{
+      if(!confirm('Delete this expense record? This cannot be undone.')) return;
       await db.collection('expenses').doc(doc.id).delete();
+      toast('Expense deleted', 'success');
       await renderExpensesTable();
     };
     body.appendChild(tr);
@@ -1687,9 +1692,11 @@ function populateSettingsForm(){
     div.className = 'subitem';
     div.innerHTML = `<span>${ev.title} — ${fmtDate(ev.date)}</span><button data-i="${i}">Remove</button>`;
     div.querySelector('button').onclick = async ()=>{
+      if(!confirm(`Remove the event "${ev.title}"?`)) return;
       const events = s.events.slice(); events.splice(i,1);
       await db.collection('settings').doc('public').update({ events });
       state.settings.events = events;
+      toast('Event removed', 'success');
       populateSettingsForm();
     };
     list.appendChild(div);
@@ -1758,6 +1765,7 @@ async function renderAdminsTable(){
       <td class="row-actions">${a.role!=='primary' ? '<button data-act="del">Remove</button>' : ''}</td>`;
     if(a.role!=='primary'){
       tr.querySelector('[data-act="del"]').onclick = async ()=>{
+        if(!confirm(`Revoke admin access for ${a.name}? This cannot be undone from here.`)) return;
         // Note: this removes the Firestore profile (revoking app access) but cannot delete
         // the underlying Firebase Auth account from client-side code - that needs the
         // Admin SDK (a Cloud Function), which is a further step beyond this file.
