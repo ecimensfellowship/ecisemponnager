@@ -1329,8 +1329,12 @@ async function loadFamilyTab(memberId){
   $all('.delFamily').forEach(btn=>{
     btn.onclick = async ()=>{
       if(!confirm('Remove this family member? This cannot be undone.')) return;
-      await db.collection('members').doc(memberId).collection('family').doc(btn.dataset.id).delete();
-      toast('Family member removed', 'success');
+      try{
+        await db.collection('members').doc(memberId).collection('family').doc(btn.dataset.id).delete();
+        toast('Family member removed', 'success');
+      }catch(err){
+        toast(err.message, 'error');
+      }
       await loadFamilyTab(memberId);
     };
   });
@@ -1418,9 +1422,13 @@ async function loadPaymentsTab(memberId){
   $all('.delPayment').forEach(btn=>{
     btn.onclick = async ()=>{
       if(!confirm('Delete this payment record? This cannot be undone.')) return;
-      await db.collection('members').doc(memberId).collection('payments').doc(btn.dataset.id).delete();
+      try{
+        await db.collection('members').doc(memberId).collection('payments').doc(btn.dataset.id).delete();
+        toast('Payment deleted', 'success');
+      }catch(err){
+        toast(err.message, 'error');
+      }
       await recalcMemberStatus(memberId);
-      toast('Payment deleted', 'success');
       await loadPaymentsTab(memberId);
     };
   });
@@ -1439,29 +1447,39 @@ async function loadPaymentsTab(memberId){
         amount: Number($('#payAmount').value), mode, confirmed,
         monthKey: monthKey(new Date(date))
       });
-      await recalcMemberStatus(memberId);
       toast('Payment recorded', 'success');
-      await loadPaymentsTab(memberId);
-    }catch(err){ toast(err.message, 'error'); }
+    }catch(err){
+      toast(err.message, 'error');
+    }
+    await recalcMemberStatus(memberId);
+    await loadPaymentsTab(memberId);
   };
 }
 
 async function recalcMemberStatus(memberId){
-  const s = state.settings;
-  const paySnap = await db.collection('members').doc(memberId).collection('payments')
-    .where('confirmed','==',true).orderBy('date','desc').limit(1).get();
-  let status = 'Active';
-  const now = new Date();
-  if(paySnap.empty){
-    status = 'Suspended'; // no confirmed payment on record at all yet -> flag for review, not auto-Inactive
-  }else{
-    const lastPaid = new Date(paySnap.docs[0].data().date);
-    const gap = monthsBetween(lastPaid, now);
-    if(gap >= (s.inactiveMonths||5)) status = 'Inactive';
-    else if(gap >= (s.suspendMonths||2)) status = 'Suspended';
-    else status = 'Active';
+  // Wrapped defensively: if this query fails for any reason (e.g. a Firestore
+  // composite index still building), we skip the status update rather than
+  // let it block the payment add/delete flow and the list refresh after it.
+  try{
+    const s = state.settings;
+    const paySnap = await db.collection('members').doc(memberId).collection('payments')
+      .where('confirmed','==',true).orderBy('date','desc').limit(1).get();
+    let status = 'Active';
+    const now = new Date();
+    if(paySnap.empty){
+      status = 'Suspended'; // no confirmed payment on record at all yet -> flag for review, not auto-Inactive
+    }else{
+      const lastPaid = new Date(paySnap.docs[0].data().date);
+      const gap = monthsBetween(lastPaid, now);
+      if(gap >= (s.inactiveMonths||5)) status = 'Inactive';
+      else if(gap >= (s.suspendMonths||2)) status = 'Suspended';
+      else status = 'Active';
+    }
+    await db.collection('members').doc(memberId).update({ status });
+  }catch(err){
+    console.warn('Status recalculation skipped:', err.message);
+    toast('Payment saved, but status recalculation is temporarily unavailable (' + err.message + ')', 'error');
   }
-  await db.collection('members').doc(memberId).update({ status });
 }
 
 
