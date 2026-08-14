@@ -150,6 +150,11 @@ body{
   background:var(--color-border);color:var(--color-primary-dark);
   font-size:0.7rem;font-weight:700;cursor:help;position:relative;
 }
+.required-mark{
+  color:var(--color-danger);
+  font-weight:700;
+  margin:0 2px;
+}
 .tooltip:hover::after{
   content:attr(data-tip);
   position:absolute;bottom:130%;left:50%;transform:translateX(-50%);
@@ -374,13 +379,13 @@ button:focus-visible, input:focus-visible, a:focus-visible{
     <h2 class="church-title-en">Evangelical Church of India — First-Time Setup</h2>
     <p class="muted small">No admin account exists yet. Create the primary administrator account to get started.</p>
 
-    <label>Admin Name <span class="tooltip" data-tip="This is shown as who set up the account. Not visible to members.">?</span></label>
+    <label>Admin Name <span class="required-mark">*</span><span class="tooltip" data-tip="This is shown as who set up the account. Not visible to members.">?</span></label>
     <input type="text" id="bsName" required placeholder="Your full name" />
 
-    <label>Choose a User ID <span class="tooltip" data-tip="Used to sign in. Pick something only you know — this account has full access.">?</span></label>
+    <label>Choose a User ID <span class="required-mark">*</span><span class="tooltip" data-tip="Used to sign in. Pick something only you know — this account has full access.">?</span></label>
     <input type="text" id="bsUserId" required placeholder="e.g. admin1" autocomplete="off" />
 
-    <label>Choose a Password <span class="tooltip" data-tip="At least 6 characters. You are the only one who will use this login.">?</span></label>
+    <label>Choose a Password <span class="required-mark">*</span><span class="tooltip" data-tip="At least 6 characters. You are the only one who will use this login.">?</span></label>
     <input type="password" id="bsPassword" required minlength="6" placeholder="Minimum 6 characters" />
 
     <button type="submit" class="btn btn-primary btn-block">Create Primary Admin Account</button>
@@ -396,10 +401,10 @@ button:focus-visible, input:focus-visible, a:focus-visible{
     <h2 id="loginChurchNameEn" class="church-title-en"></h2>
     <p id="loginTagline" class="muted small"></p>
 
-    <label>User ID</label>
+    <label>User ID <span class="required-mark">*</span></label>
     <input type="text" id="loginUserId" required placeholder="Your User ID" autocomplete="username" />
 
-    <label>Password</label>
+    <label>Password <span class="required-mark">*</span></label>
     <input type="password" id="loginPassword" required placeholder="Your Password" autocomplete="current-password" />
 
     <button type="submit" class="btn btn-primary btn-block">Sign In</button>
@@ -414,9 +419,9 @@ button:focus-visible, input:focus-visible, a:focus-visible{
     <div class="arch-card-top"><img class="arch-logo-img" alt="" /></div>
     <h2 class="church-title-en">Set a New Password</h2>
     <p class="muted small">You're using a temporary password. Please set your own before continuing.</p>
-    <label>New Password</label>
+    <label>New Password <span class="required-mark">*</span></label>
     <input type="password" id="newPassword" required minlength="6" placeholder="Minimum 6 characters" />
-    <label>Confirm New Password</label>
+    <label>Confirm New Password <span class="required-mark">*</span></label>
     <input type="password" id="confirmPassword" required minlength="6" placeholder="Re-enter password" />
     <button type="submit" class="btn btn-primary btn-block">Save & Continue</button>
     <p id="forcePwError" class="error-text hidden"></p>
@@ -512,7 +517,7 @@ button:focus-visible, input:focus-visible, a:focus-visible{
       <section id="view-members" class="view hidden">
         <div class="toolbar">
           <input type="search" id="memberSearch" placeholder="Search members by name or mobile..." class="search-input" />
-          <button class="btn btn-primary" id="addMemberBtn">+ Add Member</button>
+          <button class="btn btn-primary primary-admin-only" id="addMemberBtn">+ Add Member</button>
         </div>
         <div class="table-wrap">
           <table class="data-table" id="membersTable">
@@ -737,6 +742,41 @@ function monthsBetween(a,b){
   return (b.getFullYear()-a.getFullYear())*12 + (b.getMonth()-a.getMonth());
 }
 
+/* ---------- Validation messages ---------- */
+// Replaces the browser's generic "Please fill out this field" with a message
+// naming the actual field, using the leading text of that field's <label>.
+function wireValidationMessages(root){
+  (root || document).querySelectorAll('[required]').forEach(el=>{
+    if(el.dataset.validationWired) return;
+    el.dataset.validationWired = '1';
+    const wrapDiv = el.closest('div, p') || el.parentElement;
+    const lbl = wrapDiv ? wrapDiv.querySelector('label') : null;
+    let labelText = 'This field';
+    if(lbl){
+      const firstNode = lbl.childNodes[0];
+      const raw = firstNode ? firstNode.textContent : lbl.textContent;
+      const trimmed = (raw||'').trim();
+      if(trimmed) labelText = trimmed;
+    }
+    const setMsg = ()=>{
+      if(el.validity.valueMissing){
+        el.setCustomValidity(`${labelText} is required.`);
+      }else if(el.validity.patternMismatch){
+        el.setCustomValidity(`Please enter a valid ${labelText.toLowerCase()}.`);
+      }else if(el.validity.typeMismatch){
+        el.setCustomValidity(`Please enter a valid ${labelText.toLowerCase()}.`);
+      }else if(el.validity.tooShort){
+        el.setCustomValidity(`${labelText} is too short (minimum ${el.minLength} characters).`);
+      }else{
+        el.setCustomValidity('');
+      }
+    };
+    el.addEventListener('invalid', setMsg);
+    el.addEventListener('input', ()=> el.setCustomValidity(''));
+    el.addEventListener('change', ()=> el.setCustomValidity(''));
+  });
+}
+
 /* ---------- Modal helper ---------- */
 function openModal(innerHtml){
   const root = $('#modalRoot');
@@ -751,6 +791,7 @@ function openModal(innerHtml){
   // Deliberately no "click outside to close" behavior - popups only close via
   // the X button or a form's own Cancel/Done button, since accidental taps
   // (especially on dropdowns and date pickers on mobile) were closing them.
+  wireValidationMessages(root);
 }
 function closeModal(){ $('#modalRoot').innerHTML = ''; }
 
@@ -849,6 +890,10 @@ $('#forcePwForm').addEventListener('submit', async (e)=>{
 });
 
 $('#logoutBtn').addEventListener('click', ()=> auth.signOut());
+
+wireValidationMessages(document.getElementById('bootstrapScreen'));
+wireValidationMessages(document.getElementById('loginScreen'));
+wireValidationMessages(document.getElementById('forcePwScreen'));
 
 auth.onAuthStateChanged(async (user)=>{
   showOnly('loadingScreen');
@@ -1152,11 +1197,12 @@ function filterMembersTable(q){
         <td>${fmtDate(m.joinedDate)}</td>
         <td class="row-actions">
           <button data-act="view">View</button>
-          <button data-act="edit">Edit</button>
+          ${state.role==='primary' ? '<button data-act="edit">Edit</button>' : ''}
           ${state.role==='primary' ? '<button data-act="del" style="color:var(--color-danger);">Delete</button>' : ''}
         </td>`;
       tr.querySelector('[data-act="view"]').onclick = ()=> openMemberDetail(m.id);
-      tr.querySelector('[data-act="edit"]').onclick = ()=> openMemberForm(m.id);
+      const editBtn = tr.querySelector('[data-act="edit"]');
+      if(editBtn) editBtn.onclick = ()=> openMemberForm(m.id);
       const delBtn = tr.querySelector('[data-act="del"]');
       if(delBtn) delBtn.onclick = ()=> confirmDeleteMember(m);
       body.appendChild(tr);
@@ -1222,7 +1268,7 @@ function openMemberForm(memberId){
     <form id="memberForm">
       <div class="form-grid">
         <div class="full">
-          <label>Full Name <span class="tooltip" data-tip="Member's full name as it should appear everywhere.">?</span></label>
+          <label>Full Name <span class="required-mark">*</span><span class="tooltip" data-tip="Member's full name as it should appear everywhere.">?</span></label>
           <input type="text" id="mfName" required value="${m.name||''}">
         </div>
         <div>
@@ -1234,7 +1280,7 @@ function openMemberForm(memberId){
           <input type="date" id="mfDob" value="${m.dob||''}">
         </div>
         <div>
-          <label>Mobile Number <span class="tooltip" data-tip="Required. Last 5 digits become the member's login User ID and starting password.">?</span></label>
+          <label>Mobile Number <span class="required-mark">*</span><span class="tooltip" data-tip="Required. Last 5 digits become the member's login User ID and starting password.">?</span></label>
           <input type="tel" id="mfMobile" required pattern="[0-9]{7,15}" value="${m.mobile||''}" ${editing?'readonly':''}>
         </div>
         <div>
@@ -1316,22 +1362,27 @@ function openMemberForm(memberId){
         $('#credOk').onclick = closeModal;
       }
     }catch(err){
-      toast(err.message, 'error');
+      if(err.code === 'auth/email-already-in-use'){
+        toast(`A member with the last-5-digits User ID "${mobile.slice(-5)}" already exists in Firebase Authentication - likely a leftover from a previously deleted member with this same mobile number. Delete that old account in Firebase Console → Authentication → Users first, then try again.`, 'error');
+      }else{
+        toast(err.message, 'error');
+      }
     }
   });
 }
 
 async function openMemberDetail(memberId){
   const m = state.membersCache.find(x=>x.id===memberId);
+  const showFamily = state.role==='primary';
   openModal(`
     <h2>${m.name}</h2>
     <p class="muted small">${m.mobile} · ${statusBadge(m.status||'Active')}</p>
     <div class="tabs">
-      <button class="tab-btn active" data-tab="family">Family</button>
-      <button class="tab-btn" data-tab="payments">Payments</button>
+      ${showFamily ? '<button class="tab-btn active" data-tab="family">Family</button>' : ''}
+      <button class="tab-btn ${showFamily?'':'active'}" data-tab="payments">Payments</button>
     </div>
-    <div class="tab-panel active" id="tab-family"><p class="muted small">Loading...</p></div>
-    <div class="tab-panel" id="tab-payments"><p class="muted small">Loading...</p></div>
+    ${showFamily ? '<div class="tab-panel active" id="tab-family"><p class="muted small">Loading...</p></div>' : ''}
+    <div class="tab-panel ${showFamily?'':'active'}" id="tab-payments"><p class="muted small">Loading...</p></div>
   `);
   $all('.tab-btn').forEach(b=>{
     b.onclick = ()=>{
@@ -1341,7 +1392,7 @@ async function openMemberDetail(memberId){
       document.getElementById('tab-'+b.dataset.tab).classList.add('active');
     };
   });
-  await loadFamilyTab(memberId);
+  if(showFamily) await loadFamilyTab(memberId);
   await loadPaymentsTab(memberId);
 }
 
@@ -1360,17 +1411,18 @@ async function loadFamilyTab(memberId){
     itemsHtml += `
       <div class="subitem">
         <span>${f.photoUrl?`<img src="${f.photoUrl}" style="width:28px;height:28px;border-radius:50%;object-fit:cover;vertical-align:middle;margin-right:8px;">`:''}
-        ${f.name} <span class="muted tiny">(${f.relationship||''}, ${fmtDate(f.dob)})</span></span>
+        ${f.name} <span class="muted tiny">(${f.relationship||''}, ${fmtDate(f.dob)}${f.groupName ? ' · ' + f.groupName : ''})</span></span>
         ${state.role==='primary' ? `<button data-id="${doc.id}" class="delFamily" style="color:var(--color-danger);">Remove</button>` : ''}
       </div>`;
   });
   const relOptions = RELATIONSHIP_OPTIONS.map(r=>`<option value="${r}">${r}</option>`).join('');
+  const groupOptions = state.groupsCache.map(g=>`<option value="${g.id}">${g.name}</option>`).join('');
   panel.innerHTML = itemsHtml + `
     <form id="familyForm" style="margin-top:14px;">
       <div class="form-grid">
-        <div><label>Name</label><input type="text" id="famName" required></div>
+        <div><label>Name <span class="required-mark">*</span></label><input type="text" id="famName" required></div>
         <div>
-          <label>Relationship</label>
+          <label>Relationship <span class="required-mark">*</span></label>
           <select id="famRel" required>
             <option value="" disabled selected>Select relationship</option>
             ${relOptions}
@@ -1378,6 +1430,13 @@ async function loadFamilyTab(memberId){
         </div>
         <div><label>Date of Birth</label><input type="date" id="famDob"></div>
         <div><label>Photo</label><input type="file" id="famPhoto" accept="image/*"></div>
+        <div class="full">
+          <label>Admin Group <span class="tooltip" data-tip="Optional. Tag this family member with a specific admin group if it differs from the main member's group.">?</span></label>
+          <select id="famGroup">
+            <option value="">Same as member / unassigned</option>
+            ${groupOptions}
+          </select>
+        </div>
       </div>
       <div class="modal-actions"><button type="submit" class="btn btn-secondary">+ Add Family Member</button></div>
     </form>`;
@@ -1397,6 +1456,8 @@ async function loadFamilyTab(memberId){
     e.preventDefault();
     let photoUrl = '';
     const file = $('#famPhoto').files[0];
+    const groupId = $('#famGroup').value || null;
+    const group = state.groupsCache.find(g=>g.id===groupId);
     try{
       if(file){
         const ref = storage.ref().child(`members/${memberId}/family/${Date.now()}_${file.name}`);
@@ -1407,7 +1468,9 @@ async function loadFamilyTab(memberId){
         name: $('#famName').value.trim(),
         relationship: $('#famRel').value.trim(),
         dob: $('#famDob').value,
-        photoUrl
+        photoUrl,
+        groupId,
+        groupName: group ? group.name : null
       });
       toast('Family member added', 'success');
       await loadFamilyTab(memberId);
@@ -1450,10 +1513,10 @@ async function loadPaymentsTab(memberId){
   panel.innerHTML = rows + `
     <form id="paymentForm" style="margin-top:14px;">
       <div class="form-grid">
-        <div><label>Date</label><input type="date" id="payDate" required value="${new Date().toISOString().slice(0,10)}"></div>
-        <div><label>Amount</label><input type="number" id="payAmount" min="1" required></div>
+        <div><label>Date <span class="required-mark">*</span></label><input type="date" id="payDate" required value="${new Date().toISOString().slice(0,10)}"></div>
+        <div><label>Amount <span class="required-mark">*</span></label><input type="number" id="payAmount" min="1" required></div>
         <div class="full">
-          <label>Category</label>
+          <label>Category <span class="required-mark">*</span></label>
           <select id="payCategory" required lang="ta">
             <option value="" disabled selected>Select a category</option>
             ${categoryOptions}
@@ -1548,9 +1611,9 @@ function wireExpenseModule(){
       <h2>Add Expense</h2>
       <form id="expenseForm">
         <div class="form-grid">
-          <div><label>Date</label><input type="date" id="expDate" required value="${new Date().toISOString().slice(0,10)}"></div>
-          <div><label>Amount</label><input type="number" id="expAmount" min="1" required></div>
-          <div class="full"><label>Description</label><input type="text" id="expDesc" required></div>
+          <div><label>Date <span class="required-mark">*</span></label><input type="date" id="expDate" required value="${new Date().toISOString().slice(0,10)}"></div>
+          <div><label>Amount <span class="required-mark">*</span></label><input type="number" id="expAmount" min="1" required></div>
+          <div class="full"><label>Description <span class="required-mark">*</span></label><input type="text" id="expDesc" required></div>
         </div>
         <div class="modal-actions">
           <button type="button" class="btn btn-ghost" id="expCancel">Cancel</button>
@@ -1818,7 +1881,7 @@ function openGroupForm(group){
   openModal(`
     <h2>${editing ? 'Rename Group' : 'Add Admin Group'}</h2>
     <form id="groupForm">
-      <label>Group Name <span class="tooltip" data-tip="e.g. Women's Club, Men's Club, Youth Fellowship">?</span></label>
+      <label>Group Name <span class="required-mark">*</span><span class="tooltip" data-tip="e.g. Women's Club, Men's Club, Youth Fellowship">?</span></label>
       <input type="text" id="grpName" required value="${editing ? group.name : ''}" style="width:100%;padding:8px 10px;border:1px solid var(--color-border);border-radius:6px;">
       <div class="modal-actions">
         <button type="button" class="btn btn-ghost" id="grpCancel">Cancel</button>
@@ -1855,9 +1918,9 @@ function wireAdminModule(){
       <h2>Add Admin</h2>
       <form id="adminForm">
         <div class="form-grid">
-          <div class="full"><label>Name</label><input type="text" id="adName" required></div>
-          <div><label>User ID</label><input type="text" id="adUserId" required autocomplete="off"></div>
-          <div><label>Temporary Password</label><input type="password" id="adPassword" required minlength="6"></div>
+          <div class="full"><label>Name <span class="required-mark">*</span></label><input type="text" id="adName" required></div>
+          <div><label>User ID <span class="required-mark">*</span></label><input type="text" id="adUserId" required autocomplete="off"></div>
+          <div><label>Temporary Password <span class="required-mark">*</span></label><input type="password" id="adPassword" required minlength="6"></div>
           <div class="full">
             <label>Admin Group <span class="tooltip" data-tip="If assigned, this admin will only see and manage members in this group. Leave unassigned for no group restriction (still governed by the permissions below).">?</span></label>
             <select id="adGroup">
