@@ -321,7 +321,50 @@ body{
 .toast.success{background:var(--color-success);}
 @keyframes toastin{from{opacity:0;transform:translateY(8px);}to{opacity:1;transform:none;}}
 
-/* ============ CREDENTIAL SLIP ============ */
+/* ============ MY PAYMENTS GRID (member) ============ */
+#myPayGrid td, #myPayGrid th{ text-align:center; }
+.pay-cell{ font-size:1.1rem; }
+.pay-cell.paid{ color:var(--color-success); }
+.pay-cell.pending{ color:#8A6D00; }
+.pay-cell.none{ color:var(--color-border); }
+
+/* ============ FAMILY TREE (member) ============ */
+.family-tree{ display:flex; flex-direction:column; align-items:center; padding:30px 10px; }
+.tree-root-node{
+  background:var(--color-primary); color:#fff;
+  border-radius:12px; padding:14px 22px; text-align:center;
+  position:relative; box-shadow:var(--shadow); font-weight:700;
+}
+.tree-root-node .tree-sub{ font-weight:400; font-size:0.78rem; opacity:0.85; }
+.tree-root-node::after{
+  content:''; position:absolute; bottom:-28px; left:50%;
+  width:2px; height:28px; background:var(--color-border);
+}
+.tree-children{
+  display:flex; flex-wrap:wrap; justify-content:center; gap:24px;
+  position:relative; padding-top:28px; margin-top:0;
+}
+.tree-node{
+  position:relative; text-align:center; width:130px;
+  background:var(--color-surface); border:1px solid var(--color-border);
+  border-radius:10px; padding:12px 8px; box-shadow:var(--shadow);
+}
+.tree-node::before{
+  content:''; position:absolute; top:-28px; left:50%;
+  width:2px; height:28px; background:var(--color-border);
+}
+.tree-node .tree-photo{
+  width:48px;height:48px;border-radius:50%;object-fit:cover;
+  margin:0 auto 6px; display:block; border:2px solid var(--color-accent);
+}
+.tree-node .tree-photo-placeholder{
+  width:48px;height:48px;border-radius:50%;
+  margin:0 auto 6px; display:flex;align-items:center;justify-content:center;
+  background:var(--color-bg); color:var(--color-muted); font-size:1.4rem;
+}
+.tree-node .tree-name{ font-weight:700; font-size:0.88rem; }
+.tree-node .tree-rel{ font-size:0.75rem; color:var(--color-muted); }
+.tree-empty{ color:var(--color-muted); text-align:center; padding:20px; }
 .cred-slip{
   border:2px dashed var(--color-accent);border-radius:10px;padding:14px;
   background:#FFFBEF;margin-top:10px;font-size:0.9rem;
@@ -441,9 +484,13 @@ button:focus-visible, input:focus-visible, a:focus-visible{
     </div>
     <nav class="nav-links">
       <button class="nav-link active" data-view="dashboard">🏠 <span>Dashboard</span></button>
+      <button class="nav-link member-only" data-view="mypayments">✅ <span>My Payments</span></button>
+      <button class="nav-link member-only" data-view="myfamily">🌳 <span>My Family</span></button>
       <button class="nav-link admin-only" data-view="members">👥 <span>Members</span></button>
       <button class="nav-link admin-only" data-view="expenses">💸 <span>Expenses</span></button>
       <button class="nav-link" data-view="reports">📄 <span>Reports</span></button>
+      <button class="nav-link member-only" data-view="mypayments">🗓️ <span>My Payments</span></button>
+      <button class="nav-link member-only" data-view="myfamily">🌳 <span>My Family</span></button>
       <button class="nav-link admin-only" data-view="settings">⚙️ <span>Settings</span></button>
       <button class="nav-link primary-admin-only" data-view="groupmgmt">🗂️ <span>Admin Groups</span></button>
       <button class="nav-link primary-admin-only" data-view="adminmgmt">🛡️ <span>Admin Accounts</span></button>
@@ -511,6 +558,22 @@ button:focus-visible, input:focus-visible, a:focus-visible{
         </div>
 
         <div id="pastorFooter" class="pastor-footer hidden"></div>
+      </section>
+
+      <!-- MY PAYMENTS (member) -->
+      <section id="view-mypayments" class="view hidden">
+        <div class="toolbar">
+          <h3 class="muted">Payment History <span class="tooltip" data-tip="✅ = confirmed payment recorded that month. 🕓 = payment entered but not yet confirmed by admin.">?</span></h3>
+          <select id="myPayYear" style="padding:8px 12px;border:1px solid var(--color-border);border-radius:6px;"></select>
+        </div>
+        <div class="table-wrap">
+          <table class="data-table" id="myPayGrid"><tbody></tbody></table>
+        </div>
+      </section>
+
+      <!-- MY FAMILY (member, tree view) -->
+      <section id="view-myfamily" class="view hidden">
+        <div id="myFamilyTree" class="family-tree"></div>
       </section>
 
       <!-- MEMBERS -->
@@ -1033,7 +1096,8 @@ function wireNav(){
 
 const VIEW_TITLES = {
   dashboard:'Dashboard', members:'Members', expenses:'Expenses',
-  reports:'Reports', settings:'Settings', adminmgmt:'Admin Accounts', groupmgmt:'Admin Groups'
+  reports:'Reports', settings:'Settings', adminmgmt:'Admin Accounts', groupmgmt:'Admin Groups',
+  mypayments:'My Payments', myfamily:'My Family'
 };
 
 async function switchView(view){
@@ -1048,6 +1112,8 @@ async function switchView(view){
   if(view==='adminmgmt') await renderAdminsTable();
   if(view==='groupmgmt') await renderGroupsTable();
   if(view==='dashboard') await renderDashboard();
+  if(view==='mypayments') await renderMyPaymentsGrid();
+  if(view==='myfamily') await renderMyFamilyTree();
 }
 
 /* =========================================================
@@ -1598,6 +1664,84 @@ async function recalcMemberStatus(memberId){
     console.warn('Status recalculation skipped:', err.message);
     toast('Payment saved, but status recalculation is temporarily unavailable (' + err.message + ')', 'error');
   }
+}
+
+/* =========================================================
+   MY PAYMENTS - month-wise grid view (member's own record)
+   ========================================================= */
+
+const MONTH_LABELS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+async function renderMyPaymentsGrid(){
+  const snap = await db.collection('members').doc(state.uid).collection('payments').get();
+  const byMonth = {}; // monthKey -> 'paid' | 'pending'
+  snap.forEach(doc=>{
+    const p = doc.data();
+    if(!p.monthKey) return;
+    if(p.confirmed) byMonth[p.monthKey] = 'paid';
+    else if(!byMonth[p.monthKey]) byMonth[p.monthKey] = 'pending';
+  });
+
+  const years = new Set([new Date().getFullYear()]);
+  Object.keys(byMonth).forEach(mk=> years.add(Number(mk.split('-')[0])));
+  const sortedYears = Array.from(years).sort((a,b)=> b-a);
+
+  const yearSel = $('#myPayYear');
+  const prevSelected = yearSel.value;
+  yearSel.innerHTML = sortedYears.map(y=>`<option value="${y}">${y}</option>`).join('');
+  yearSel.value = prevSelected && sortedYears.includes(Number(prevSelected)) ? prevSelected : String(new Date().getFullYear());
+  yearSel.onchange = ()=> paintGrid(Number(yearSel.value));
+
+  function paintGrid(year){
+    let head = '<tr>' + MONTH_LABELS.map(m=>`<th>${m}</th>`).join('') + '</tr>';
+    let row = '<tr>';
+    for(let m=1; m<=12; m++){
+      const mk = `${year}-${String(m).padStart(2,'0')}`;
+      const st = byMonth[mk];
+      const symbol = st==='paid' ? '✅' : st==='pending' ? '🕓' : '—';
+      const cls = st==='paid' ? 'paid' : st==='pending' ? 'pending' : 'none';
+      row += `<td class="pay-cell ${cls}">${symbol}</td>`;
+    }
+    row += '</tr>';
+    $('#myPayGrid').innerHTML = `<thead>${head}</thead><tbody>${row}</tbody>`;
+  }
+  paintGrid(Number(yearSel.value));
+}
+
+/* =========================================================
+   MY FAMILY - tree view (member's own record, read-only)
+   ========================================================= */
+
+async function renderMyFamilyTree(){
+  const snap = await db.collection('members').doc(state.uid).collection('family').get();
+  const container = $('#myFamilyTree');
+  const rootName = state.memberDoc.name || 'You';
+
+  if(snap.empty){
+    container.innerHTML = `
+      <div class="tree-root-node">${rootName}<div class="tree-sub">You</div></div>
+      <p class="tree-empty" style="margin-top:40px;">No family details have been added yet. Ask your church admin to add them.</p>`;
+    return;
+  }
+
+  let childrenHtml = '';
+  snap.forEach(doc=>{
+    const f = doc.data();
+    const photo = f.photoUrl
+      ? `<img class="tree-photo" src="${f.photoUrl}" alt="">`
+      : `<div class="tree-photo-placeholder">👤</div>`;
+    childrenHtml += `
+      <div class="tree-node">
+        ${photo}
+        <div class="tree-name">${f.name}</div>
+        <div class="tree-rel">${f.relationship||''}</div>
+        <div class="tree-rel">${fmtDate(f.dob)}</div>
+      </div>`;
+  });
+
+  container.innerHTML = `
+    <div class="tree-root-node">${rootName}<div class="tree-sub">You</div></div>
+    <div class="tree-children">${childrenHtml}</div>`;
 }
 
 
