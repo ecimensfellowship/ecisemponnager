@@ -1264,11 +1264,14 @@ function filterMembersTable(q){
         <td class="row-actions">
           <button data-act="view">View</button>
           ${state.role==='primary' ? '<button data-act="edit">Edit</button>' : ''}
+          ${(state.role==='primary' && m.hasLogin===false) ? '<button data-act="createlogin" style="color:var(--color-primary);font-weight:600;">Create Login</button>' : ''}
           ${state.role==='primary' ? '<button data-act="del" style="color:var(--color-danger);">Delete</button>' : ''}
         </td>`;
       tr.querySelector('[data-act="view"]').onclick = ()=> openMemberDetail(m.id);
       const editBtn = tr.querySelector('[data-act="edit"]');
       if(editBtn) editBtn.onclick = ()=> openMemberForm(m.id);
+      const loginBtn = tr.querySelector('[data-act="createlogin"]');
+      if(loginBtn) loginBtn.onclick = ()=> createLoginForMember(m.id);
       const delBtn = tr.querySelector('[data-act="del"]');
       if(delBtn) delBtn.onclick = ()=> confirmDeleteMember(m);
       body.appendChild(tr);
@@ -1358,6 +1361,17 @@ function openMemberForm(memberId){
           <input type="text" id="mfAddress" value="${m.address||''}">
         </div>
         ${groupFieldHtml}
+        ${!editing ? `
+        <div class="full">
+          <label style="display:flex;align-items:center;gap:6px;font-weight:600;">
+            <input type="checkbox" id="mfCreateLogin" checked style="width:auto;">
+            Create login access now
+            <span class="tooltip" data-tip="If unchecked, this member is added as a record only, with no way to sign in. You (primary admin) can create their login later from the Members list, whenever you're ready.">?</span>
+          </label>
+        </div>` : `
+        <div class="full muted small">
+          Login access: <b>${m.hasLogin===false ? 'Not created yet' : 'Active'}</b>
+        </div>`}
         ${editing ? `
         <div>
           <label>Status</label>
@@ -1398,35 +1412,40 @@ function openMemberForm(memberId){
         toast('Member updated', 'success');
         closeModal();
         await renderMembersTable();
-      }else{
-        const last5 = mobile.slice(-5);
-        // Firebase Auth requires passwords of at least 6 characters, so the temporary
-        // password uses the last 6 digits (still simple to convey) while the User ID
-        // stays at 5 digits as requested.
-        const last6 = mobile.slice(-6);
-        if(last6.length < 6){ toast('Mobile number must be at least 6 digits.', 'error'); return; }
-        const cred = await secondaryAuth.createUserWithEmailAndPassword(toEmail(last5), last6);
-        const uid = cred.user.uid;
-        await secondaryAuth.signOut();
-        payload.status = 'Active';
-        payload.mustChangePassword = true;
-        payload.createdAt = firebase.firestore.FieldValue.serverTimestamp();
-        await db.collection('members').doc(uid).set(payload);
-        closeModal();
-        toast('Member added', 'success');
-        await renderMembersTable();
-        openModal(`
-          <h2>Member Added</h2>
-          <p>Share these login details with <b>${payload.name}</b>:</p>
-          <div class="cred-slip">
-            User ID: <b>${last5}</b> <span class="muted tiny">(last 5 digits of mobile)</span><br>
-            Temporary Password: <b>${last6}</b> <span class="muted tiny">(last 6 digits of mobile)</span>
-          </div>
-          <p class="muted small">They'll be asked to set their own password on first login.</p>
-          <div class="modal-actions"><button class="btn btn-primary" id="credOk">Done</button></div>
-        `);
-        $('#credOk').onclick = closeModal;
+        return;
       }
+
+      const createLoginNow = $('#mfCreateLogin').checked;
+
+      if(!createLoginNow){
+        payload.status = 'Active';
+        payload.hasLogin = false;
+        payload.createdAt = firebase.firestore.FieldValue.serverTimestamp();
+        await db.collection('members').add(payload); // auto-generated document ID - no Auth account yet
+        closeModal();
+        toast('Member added (no login access yet - create it anytime from the Members list)', 'success');
+        await renderMembersTable();
+        return;
+      }
+
+      const last5 = mobile.slice(-5);
+      // Firebase Auth requires passwords of at least 6 characters, so the temporary
+      // password uses the last 6 digits (still simple to convey) while the User ID
+      // stays at 5 digits as requested.
+      const last6 = mobile.slice(-6);
+      if(last6.length < 6){ toast('Mobile number must be at least 6 digits.', 'error'); return; }
+      const cred = await secondaryAuth.createUserWithEmailAndPassword(toEmail(last5), last6);
+      const uid = cred.user.uid;
+      await secondaryAuth.signOut();
+      payload.status = 'Active';
+      payload.hasLogin = true;
+      payload.mustChangePassword = true;
+      payload.createdAt = firebase.firestore.FieldValue.serverTimestamp();
+      await db.collection('members').doc(uid).set(payload);
+      closeModal();
+      toast('Member added', 'success');
+      await renderMembersTable();
+      showCredentialSlip(payload.name, last5, last6);
     }catch(err){
       if(err.code === 'auth/email-already-in-use'){
         toast(`A member with the last-5-digits User ID "${mobile.slice(-5)}" already exists in Firebase Authentication - likely a leftover from a previously deleted member with this same mobile number. Delete that old account in Firebase Console → Authentication → Users first, then try again.`, 'error');
@@ -1435,6 +1454,72 @@ function openMemberForm(memberId){
       }
     }
   });
+}
+
+function showCredentialSlip(name, userId, password){
+  openModal(`
+    <h2>Login Created</h2>
+    <p>Share these login details with <b>${name}</b>:</p>
+    <div class="cred-slip">
+      User ID: <b>${userId}</b> <span class="muted tiny">(last 5 digits of mobile)</span><br>
+      Temporary Password: <b>${password}</b> <span class="muted tiny">(last 6 digits of mobile)</span>
+    </div>
+    <p class="muted small">They'll be asked to set their own password on first login.</p>
+    <div class="modal-actions"><button class="btn btn-primary" id="credOk">Done</button></div>
+  `);
+  $('#credOk').onclick = closeModal;
+}
+
+// For a member added without login access - creates their Auth account now and
+// migrates their record (and family/payment history) onto the new UID-keyed
+// document, since a member can only own/access their own record by UID match.
+async function createLoginForMember(oldMemberId){
+  const m = state.membersCache.find(x=>x.id===oldMemberId);
+  if(!m){ toast('Member not found.', 'error'); return; }
+  if(!confirm(`Create login access for ${m.name}? Their User ID and password will be generated from their mobile number.`)) return;
+
+  const mobile = m.mobile || '';
+  const last5 = mobile.slice(-5);
+  const last6 = mobile.slice(-6);
+  if(last6.length < 6){ toast("This member's mobile number is too short to generate a password (need at least 6 digits).", 'error'); return; }
+
+  try{
+    const cred = await secondaryAuth.createUserWithEmailAndPassword(toEmail(last5), last6);
+    const uid = cred.user.uid;
+    await secondaryAuth.signOut();
+
+    const newData = { ...m };
+    delete newData.id;
+    newData.hasLogin = true;
+    newData.mustChangePassword = true;
+    await db.collection('members').doc(uid).set(newData);
+
+    const famSnap = await db.collection('members').doc(oldMemberId).collection('family').get();
+    for(const doc of famSnap.docs){
+      await db.collection('members').doc(uid).collection('family').doc(doc.id).set(doc.data());
+    }
+    const paySnap = await db.collection('members').doc(oldMemberId).collection('payments').get();
+    for(const doc of paySnap.docs){
+      await db.collection('members').doc(uid).collection('payments').doc(doc.id).set(doc.data());
+    }
+    for(const doc of famSnap.docs){
+      await db.collection('members').doc(oldMemberId).collection('family').doc(doc.id).delete();
+    }
+    for(const doc of paySnap.docs){
+      await db.collection('members').doc(oldMemberId).collection('payments').doc(doc.id).delete();
+    }
+    await db.collection('members').doc(oldMemberId).delete();
+
+    toast('Login access created', 'success');
+    await renderMembersTable();
+    showCredentialSlip(m.name, last5, last6);
+  }catch(err){
+    if(err.code === 'auth/email-already-in-use'){
+      toast(`A login with User ID "${last5}" already exists in Firebase Authentication - likely from a previously deleted member with this same mobile number. Delete that old account in Firebase Console → Authentication → Users first, then try again.`, 'error');
+    }else{
+      toast(err.message, 'error');
+    }
+  }
 }
 
 async function openMemberDetail(memberId){
