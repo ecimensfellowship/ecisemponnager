@@ -1554,6 +1554,7 @@ const RELATIONSHIP_OPTIONS = [
 ];
 
 async function loadFamilyTab(memberId){
+  const m = state.membersCache.find(x=>x.id===memberId) || {};
   const snap = await db.collection('members').doc(memberId).collection('family').get();
   const panel = $('#tab-family');
   let itemsHtml = snap.empty ? '<p class="muted small">No family members added yet.</p>' : '';
@@ -1562,7 +1563,7 @@ async function loadFamilyTab(memberId){
     itemsHtml += `
       <div class="subitem">
         <span>${f.photoUrl?`<img src="${f.photoUrl}" style="width:28px;height:28px;border-radius:50%;object-fit:cover;vertical-align:middle;margin-right:8px;">`:''}
-        ${f.name} <span class="muted tiny">(${f.relationship||''}, ${fmtDate(f.dob)}${f.groupName ? ' · ' + f.groupName : ''})</span></span>
+        ${f.name} <span class="muted tiny">(${f.relationship||''}, ${fmtDate(f.dob)}${f.groupName ? ' · ' + f.groupName : ''}${f.hasLogin ? ' · has own login' : ''})</span></span>
         ${state.role==='primary' ? `<button data-id="${doc.id}" class="delFamily" style="color:var(--color-danger);">Remove</button>` : ''}
       </div>`;
   });
@@ -1588,6 +1589,18 @@ async function loadFamilyTab(memberId){
             ${groupOptions}
           </select>
         </div>
+        ${state.role==='primary' ? `
+        <div class="full">
+          <label style="display:flex;align-items:center;gap:6px;font-weight:600;">
+            <input type="checkbox" id="famCreateLogin" style="width:auto;">
+            Create their own login access
+            <span class="tooltip" data-tip="Gives this family member their own User ID/password so they can sign in independently, separate from ${m.name||'the main member'}'s login. Requires a mobile number.">?</span>
+          </label>
+        </div>
+        <div class="full hidden" id="famMobileWrap">
+          <label>Mobile Number <span class="required-mark">*</span> <span class="tooltip" data-tip="Needed to generate their User ID (last 5 digits) and temporary password (last 6 digits), same as the main member flow.">?</span></label>
+          <input type="tel" id="famMobile" pattern="[0-9]{7,15}">
+        </div>` : ''}
       </div>
       <div class="modal-actions"><button type="submit" class="btn btn-secondary">+ Add Family Member</button></div>
     </form>`;
@@ -1603,29 +1616,98 @@ async function loadFamilyTab(memberId){
       await loadFamilyTab(memberId);
     };
   });
+  const createLoginCb = $('#famCreateLogin');
+  if(createLoginCb){
+    createLoginCb.onchange = ()=>{
+      const wrap = $('#famMobileWrap');
+      const mobileInput = $('#famMobile');
+      wrap.classList.toggle('hidden', !createLoginCb.checked);
+      mobileInput.required = createLoginCb.checked;
+    };
+  }
+  wireValidationMessages(panel);
   $('#familyForm').onsubmit = async (e)=>{
     e.preventDefault();
     let photoUrl = '';
     const file = $('#famPhoto').files[0];
     const groupId = $('#famGroup').value || null;
     const group = state.groupsCache.find(g=>g.id===groupId);
+    const wantsLogin = createLoginCb ? createLoginCb.checked : false;
+    const famMobile = $('#famMobile') ? $('#famMobile').value.trim() : '';
+
+    if(wantsLogin){
+      const last6 = famMobile.slice(-6);
+      if(last6.length < 6){ toast('Mobile number must be at least 6 digits to create a login.', 'error'); return; }
+    }
+
     try{
       if(file){
         const ref = storage.ref().child(`members/${memberId}/family/${Date.now()}_${file.name}`);
         await ref.put(file);
         photoUrl = await ref.getDownloadURL();
       }
-      await db.collection('members').doc(memberId).collection('family').add({
+
+      const famData = {
         name: $('#famName').value.trim(),
         relationship: $('#famRel').value.trim(),
         dob: $('#famDob').value,
         photoUrl,
         groupId,
-        groupName: group ? group.name : null
+        groupName: group ? group.name : null,
+        mobile: famMobile || null,
+        hasLogin: false
+      };
+
+      if(!wantsLogin){
+        await db.collection('members').doc(memberId).collection('family').add(famData);
+        toast('Family member added', 'success');
+        await loadFamilyTab(memberId);
+        return;
+      }
+
+      // Create an independent login for this family member. This reuses the same
+      // top-level "members" login/dashboard machinery as a regular member, linked
+      // back to the household via parentMemberId - so their sign-in, forced password
+      // reset, and My Payments/My Family views all work the same way out of the box.
+      const last5 = famMobile.slice(-5);
+      const last6 = famMobile.slice(-6);
+      const cred = await secondaryAuth.createUserWithEmailAndPassword(toEmail(last5), last6);
+      const uid = cred.user.uid;
+      await secondaryAuth.signOut();
+
+      famData.hasLogin = true;
+      famData.linkedMemberId = uid;
+      await db.collection('members').doc(memberId).collection('family').add(famData);
+
+      await db.collection('members').doc(uid).set({
+        name: famData.name,
+        fatherHusbandName: '',
+        dob: famData.dob,
+        mobile: famMobile,
+        address: m.address || '',
+        joinedDate: new Date().toISOString().slice(0,10),
+        groupId: famData.groupId || m.groupId || null,
+        groupName: famData.groupName || m.groupName || null,
+        status: 'Active',
+        hasLogin: true,
+        mustChangePassword: true,
+        isFamilyMember: true,
+        parentMemberId: memberId,
+        parentMemberName: m.name || '',
+        relationshipToHousehold: famData.relationship,
+        createdAt: firebase.firestore.FieldValue.serverTimestamp()
       });
+
       toast('Family member added', 'success');
       await loadFamilyTab(memberId);
-    }catch(err){ toast(err.message, 'error'); }
+      showCredentialSlip(famData.name, last5, last6);
+    }catch(err){
+      if(err.code === 'auth/email-already-in-use'){
+        toast(`A login with User ID "${famMobile.slice(-5)}" already exists in Firebase Authentication - likely a leftover from a previously deleted record with this same mobile number. Delete that old account in Firebase Console → Authentication → Users first, then try again.`, 'error');
+      }else{
+        toast(err.message, 'error');
+      }
+    }
   };
 }
 
@@ -1688,6 +1770,7 @@ async function loadPaymentsTab(memberId){
       </div>
       <div class="modal-actions"><button type="submit" class="btn btn-secondary">+ Add Payment</button></div>
     </form>`;
+  wireValidationMessages(panel);
   $all('.delPayment').forEach(btn=>{
     btn.onclick = async ()=>{
       if(!confirm('Delete this payment record? This cannot be undone.')) return;
