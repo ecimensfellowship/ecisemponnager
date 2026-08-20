@@ -364,6 +364,10 @@ body{
 }
 .tree-node .tree-name{ font-weight:700; font-size:0.88rem; }
 .tree-node .tree-rel{ font-size:0.75rem; color:var(--color-muted); }
+.tree-login-badge{
+  font-size:0.68rem; color:var(--color-primary); font-weight:700;
+  margin-top:6px; background:var(--color-bg); border-radius:6px; padding:2px 6px;
+}
 .tree-empty{ color:var(--color-muted); text-align:center; padding:20px; }
 .cred-slip{
   border:2px dashed var(--color-accent);border-radius:10px;padding:14px;
@@ -489,8 +493,6 @@ button:focus-visible, input:focus-visible, a:focus-visible{
       <button class="nav-link admin-only" data-view="members">👥 <span>Members</span></button>
       <button class="nav-link admin-only" data-view="expenses">💸 <span>Expenses</span></button>
       <button class="nav-link" data-view="reports">📄 <span>Reports</span></button>
-      <button class="nav-link member-only" data-view="mypayments">🗓️ <span>My Payments</span></button>
-      <button class="nav-link member-only" data-view="myfamily">🌳 <span>My Family</span></button>
       <button class="nav-link admin-only" data-view="settings">⚙️ <span>Settings</span></button>
       <button class="nav-link primary-admin-only" data-view="groupmgmt">🗂️ <span>Admin Groups</span></button>
       <button class="nav-link primary-admin-only" data-view="adminmgmt">🛡️ <span>Admin Accounts</span></button>
@@ -516,7 +518,20 @@ button:focus-visible, input:focus-visible, a:focus-visible{
         <div id="specialEventBanner" class="special-event-banner hidden"></div>
 
         <div class="widget-grid">
-          <div class="widget card">
+          <div class="widget card member-only">
+            <div class="widget-head">
+              <h3>My Profile</h3>
+            </div>
+            <div class="widget-body">
+              <div class="stat-row">Name: <b id="myProfileName">-</b></div>
+              <div class="stat-row">Date of Birth: <b id="myProfileDob">-</b></div>
+              <div class="stat-row">Mobile: <b id="myProfileMobile">-</b></div>
+              <div class="stat-row">Admin Group: <b id="myProfileGroup">-</b></div>
+              <div class="stat-row">Status: <b id="myProfileStatus">-</b></div>
+            </div>
+          </div>
+
+          <div class="widget card admin-only">
             <div class="widget-head">
               <h3>Payment Status <span class="tiny muted">(this month)</span></h3>
               <button class="link-btn toggle-widget" data-target="paidStatusBody">Hide</button>
@@ -952,7 +967,16 @@ $('#forcePwForm').addEventListener('submit', async (e)=>{
   }
 });
 
-$('#logoutBtn').addEventListener('click', ()=> auth.signOut());
+$('#logoutBtn').addEventListener('click', ()=>{
+  // Clear anything sensitive out of the DOM immediately on logout, rather than
+  // waiting for the next login's async setup to get around to it.
+  ['membersTableBody','adminsTableBody','expensesTableBody','groupsTableBody'].forEach(id=>{
+    const el = document.getElementById(id);
+    if(el) el.innerHTML = '';
+  });
+  showOnly('loadingScreen');
+  auth.signOut();
+});
 
 wireValidationMessages(document.getElementById('bootstrapScreen'));
 wireValidationMessages(document.getElementById('loginScreen'));
@@ -1025,6 +1049,21 @@ function applyTheme(theme){
    ========================================================= */
 
 async function enterApp(){
+  // Reset to a blank Dashboard state SYNCHRONOUSLY, before anything else runs and
+  // before the app shell is revealed. Without this, if a different person logs in
+  // on the same browser tab right after someone else logs out, whatever view that
+  // previous session last had open (e.g. an admin's Members table, with real names
+  // and working Edit/Delete buttons) stays sitting in the DOM and flashes on screen
+  // for a moment before the async work below finishes and switches to Dashboard.
+  $all('.view').forEach(v=> v.classList.add('hidden'));
+  show($('#view-dashboard'));
+  $('#viewTitle').textContent = 'Dashboard';
+  $all('.nav-link').forEach(b=> b.classList.toggle('active', b.dataset.view==='dashboard'));
+  ['membersTableBody','adminsTableBody','expensesTableBody','groupsTableBody'].forEach(id=>{
+    const el = document.getElementById(id);
+    if(el) el.innerHTML = '';
+  });
+
   showOnly('appShell');
   const s = state.settings;
 
@@ -1047,14 +1086,39 @@ async function enterApp(){
   wireAdminModule();
   wireGroupModule();
 
-  await loadGroups();
+  // Groups are admin-only in Firestore rules - a plain member querying this
+  // collection gets an outright permission-denied (not a filtered empty result),
+  // which would otherwise throw here and skip the switchView('dashboard') call
+  // below, leaving whatever view was on screen from a previous session in this
+  // browser tab. Guarding by role, and catching defensively either way.
+  if(state.role==='primary' || state.role==='secondary'){
+    try{
+      await loadGroups();
+    }catch(err){
+      console.warn('Could not load groups:', err.message);
+    }
+  }
+
   await renderDashboard();
   switchView('dashboard');
 }
 
 async function loadGroups(){
-  const snap = await db.collection('groups').get();
-  state.groupsCache = snap.docs.map(d=>({id:d.id, ...d.data()}));
+  // Only admins can read the groups collection (see Firestore rules) - a member
+  // login has no reason to fetch it, and letting this throw uncaught for a member
+  // would abort enterApp() before it ever reaches switchView('dashboard'), leaving
+  // whatever was on screen before (e.g. a previous admin session's view) stuck visible.
+  if(state.role !== 'primary' && state.role !== 'secondary'){
+    state.groupsCache = [];
+    return;
+  }
+  try{
+    const snap = await db.collection('groups').get();
+    state.groupsCache = snap.docs.map(d=>({id:d.id, ...d.data()}));
+  }catch(err){
+    console.warn('Could not load groups:', err.message);
+    state.groupsCache = [];
+  }
 }
 
 function applyRoleVisibility(){
@@ -1100,7 +1164,20 @@ const VIEW_TITLES = {
   mypayments:'My Payments', myfamily:'My Family'
 };
 
+// Views only an admin (primary or secondary) should ever be able to render.
+// Enforced here as a hard block - independent of whether the triggering nav
+// button was correctly hidden - so a stale cached page, leftover view state,
+// or any other unexpected path can never actually show admin-only data to
+// a member.
+const ADMIN_ONLY_VIEWS = ['members','expenses','settings','adminmgmt','groupmgmt'];
+
 async function switchView(view){
+  const isAdminRole = state.role==='primary' || state.role==='secondary';
+  if(ADMIN_ONLY_VIEWS.includes(view) && !isAdminRole){
+    console.warn(`Blocked attempt to render admin-only view "${view}" for role "${state.role}".`);
+    view = 'dashboard';
+  }
+
   $all('.nav-link').forEach(b=> b.classList.toggle('active', b.dataset.view===view));
   $all('.view').forEach(v=> v.classList.add('hidden'));
   show($('#view-' + view));
@@ -1161,10 +1238,14 @@ async function renderDashboard(){
   } else hide(banner);
 
   if(state.role==='member'){
-    // Simplified widgets for member view: just birthdays + events (no org-wide stats)
-    $all('.widget.card').forEach(w=>{ if(!w.classList.contains('admin-only')) {} });
+    // Org-wide widgets (Payment Status, Fund Summary) are hidden via their
+    // admin-only class in applyRoleVisibility() already - no extra JS needed here.
+    $('#myProfileName').textContent = state.memberDoc.name || '-';
+    $('#myProfileDob').textContent = state.memberDoc.dob ? fmtDate(state.memberDoc.dob) : '-';
+    $('#myProfileMobile').textContent = state.memberDoc.mobile || '-';
+    $('#myProfileGroup').textContent = state.memberDoc.groupName || 'Unassigned';
+    $('#myProfileStatus').textContent = state.memberDoc.status || '-';
     renderBirthdaysWidget([state.memberDoc]);
-    hide($('.widget.card:has(#paidStatusBody)')); // best-effort; ignored on old browsers
     return;
   }
 
@@ -1556,6 +1637,27 @@ const RELATIONSHIP_OPTIONS = [
 async function loadFamilyTab(memberId){
   const m = state.membersCache.find(x=>x.id===memberId) || {};
   const snap = await db.collection('members').doc(memberId).collection('family').get();
+
+  // Self-heal: any family member with a login created before linkedFamilyUids
+  // existed won't be able to see this household in their own My Family view yet.
+  // Backfilling it here (harmless to repeat via arrayUnion) means simply opening
+  // this tab as primary admin fixes it, with no separate migration step needed.
+  if(state.role==='primary'){
+    const linkedUids = snap.docs
+      .map(d=>d.data())
+      .filter(f=> f.hasLogin && f.linkedMemberId)
+      .map(f=> f.linkedMemberId);
+    if(linkedUids.length){
+      try{
+        await db.collection('members').doc(memberId).update({
+          linkedFamilyUids: firebase.firestore.FieldValue.arrayUnion(...linkedUids)
+        });
+      }catch(err){
+        console.warn('Could not backfill linkedFamilyUids:', err.message);
+      }
+    }
+  }
+
   const panel = $('#tab-family');
   let itemsHtml = snap.empty ? '<p class="muted small">No family members added yet.</p>' : '';
   snap.forEach(doc=>{
@@ -1696,6 +1798,13 @@ async function loadFamilyTab(memberId){
         parentMemberName: m.name || '',
         relationshipToHousehold: famData.relationship,
         createdAt: firebase.firestore.FieldValue.serverTimestamp()
+      });
+
+      // Record the reverse link on the household head's own record, so Firestore
+      // rules can let this family member read that record and its family list -
+      // otherwise they'd only ever see themselves in their own My Family view.
+      await db.collection('members').doc(memberId).update({
+        linkedFamilyUids: firebase.firestore.FieldValue.arrayUnion(uid)
       });
 
       toast('Family member added', 'success');
@@ -1880,33 +1989,64 @@ async function renderMyPaymentsGrid(){
    MY FAMILY - tree view (member's own record, read-only)
    ========================================================= */
 
+function treeNodeHtml(f){
+  const photo = f.photoUrl
+    ? `<img class="tree-photo" src="${f.photoUrl}" alt="">`
+    : `<div class="tree-photo-placeholder">👤</div>`;
+  return `
+    <div class="tree-node">
+      ${photo}
+      <div class="tree-name">${f.name}</div>
+      <div class="tree-rel">${f.relationship||''}</div>
+      ${f.dob ? `<div class="tree-rel">${fmtDate(f.dob)}</div>` : ''}
+      ${f.hasLogin ? '<div class="tree-login-badge">🔑 Has own login</div>' : ''}
+    </div>`;
+}
+
 async function renderMyFamilyTree(){
-  const snap = await db.collection('members').doc(state.uid).collection('family').get();
   const container = $('#myFamilyTree');
   const rootName = state.memberDoc.name || 'You';
+  const md = state.memberDoc;
 
-  if(snap.empty){
+  let familyDocs = [];
+
+  if(md.isFamilyMember && md.parentMemberId){
+    // This login was created for someone originally added as a family member
+    // under someone else's record (e.g. a spouse). Show them the whole household
+    // instead of their own (empty) family subcollection: the household head,
+    // plus everyone else in that family list, excluding their own entry.
+    try{
+      const headSnap = await db.collection('members').doc(md.parentMemberId).get();
+      if(headSnap.exists){
+        const head = headSnap.data();
+        familyDocs.push({
+          name: head.name,
+          relationship: md.relationshipToHousehold ? `Your ${md.relationshipToHousehold.toLowerCase()}` : 'Head of household',
+          dob: head.dob,
+          hasLogin: true
+        });
+      }
+      const famSnap = await db.collection('members').doc(md.parentMemberId).collection('family').get();
+      famSnap.forEach(doc=>{
+        const f = doc.data();
+        if(f.linkedMemberId !== state.uid) familyDocs.push(f); // skip the node that would just be "You" again
+      });
+    }catch(err){
+      console.warn('Could not load household details:', err.message);
+    }
+  } else {
+    const snap = await db.collection('members').doc(state.uid).collection('family').get();
+    snap.forEach(doc=> familyDocs.push(doc.data()));
+  }
+
+  if(familyDocs.length === 0){
     container.innerHTML = `
       <div class="tree-root-node">${rootName}<div class="tree-sub">You</div></div>
       <p class="tree-empty" style="margin-top:40px;">No family details have been added yet. Ask your church admin to add them.</p>`;
     return;
   }
 
-  let childrenHtml = '';
-  snap.forEach(doc=>{
-    const f = doc.data();
-    const photo = f.photoUrl
-      ? `<img class="tree-photo" src="${f.photoUrl}" alt="">`
-      : `<div class="tree-photo-placeholder">👤</div>`;
-    childrenHtml += `
-      <div class="tree-node">
-        ${photo}
-        <div class="tree-name">${f.name}</div>
-        <div class="tree-rel">${f.relationship||''}</div>
-        <div class="tree-rel">${fmtDate(f.dob)}</div>
-      </div>`;
-  });
-
+  const childrenHtml = familyDocs.map(treeNodeHtml).join('');
   container.innerHTML = `
     <div class="tree-root-node">${rootName}<div class="tree-sub">You</div></div>
     <div class="tree-children">${childrenHtml}</div>`;
