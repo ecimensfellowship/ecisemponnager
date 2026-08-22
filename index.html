@@ -531,6 +531,16 @@ button:focus-visible, input:focus-visible, a:focus-visible{
             </div>
           </div>
 
+          <div class="widget card member-only hidden" id="myAuctionWidget">
+            <div class="widget-head">
+              <h3>Auction Balance <span class="ta">/ ஏல நிலுவைத் தொகை</span></h3>
+            </div>
+            <div class="widget-body">
+              <div class="stat-row">Initial Amount: <b id="myAuctionInitial">₹0</b></div>
+              <div class="stat-row stat-highlight">Balance Remaining: <b id="myAuctionBalance">₹0</b></div>
+            </div>
+          </div>
+
           <div class="widget card admin-only">
             <div class="widget-head">
               <h3>Payment Status <span class="tiny muted">(this month)</span></h3>
@@ -639,6 +649,10 @@ button:focus-visible, input:focus-visible, a:focus-visible{
           <button class="report-card card member-only" data-report="mypayments">
             <span class="report-icon">🧾</span>
             <span>My Payment History</span>
+          </button>
+          <button class="report-card card member-only" data-report="auctionhistory">
+            <span class="report-icon">🔨</span>
+            <span>Auction Balance History</span>
           </button>
         </div>
       </section>
@@ -784,8 +798,19 @@ const state = {
   settings: null,
   membersCache: [],
   adminsCache: [],
-  groupsCache: []
+  groupsCache: [],
+  linkedMemberDoc: null   // set when an admin is also linked to their own member profile
 };
+
+// Resolves "my own member record" regardless of whether the current session is a
+// plain member login, or an admin who has also been given a personal profile
+// (stored at members/{same admin uid}, via Admin Accounts -> Add Personal Details) -
+// used by My Payments / My Family so those views work the same way for both cases.
+function getSelfMemberContext(){
+  if(state.role==='member') return { id: state.uid, doc: state.memberDoc };
+  if(state.linkedMemberDoc) return { id: state.uid, doc: state.linkedMemberDoc };
+  return null;
+}
 
 /* ---------- Small utilities ---------- */
 function $(sel){ return document.querySelector(sel); }
@@ -1097,6 +1122,15 @@ async function enterApp(){
     }catch(err){
       console.warn('Could not load groups:', err.message);
     }
+    // An admin may also have a personal member profile at members/{same uid} -
+    // see Admin Accounts -> Add Personal Details. isOwner already grants them
+    // read access to it under the existing rules (auth.uid == doc id).
+    try{
+      const linkedSnap = await db.collection('members').doc(state.uid).get();
+      if(linkedSnap.exists) state.linkedMemberDoc = { id: linkedSnap.id, ...linkedSnap.data() };
+    }catch(err){
+      console.warn('Could not load personal profile:', err.message);
+    }
   }
 
   await renderDashboard();
@@ -1137,7 +1171,8 @@ function applyRoleVisibility(){
     el.classList.toggle('hidden', !allowed);
   });
   $all('.primary-admin-only').forEach(el=> el.classList.toggle('hidden', state.role!=='primary'));
-  $all('.member-only').forEach(el=> el.classList.toggle('hidden', state.role!=='member'));
+  const hasSelfProfile = state.role==='member' || !!state.linkedMemberDoc;
+  $all('.member-only').forEach(el=> el.classList.toggle('hidden', !hasSelfProfile));
 }
 
 function wireNav(){
@@ -1237,17 +1272,28 @@ async function renderDashboard(){
     show(banner);
   } else hide(banner);
 
-  if(state.role==='member'){
+  const self = getSelfMemberContext();
+  if(self){
     // Org-wide widgets (Payment Status, Fund Summary) are hidden via their
     // admin-only class in applyRoleVisibility() already - no extra JS needed here.
-    $('#myProfileName').textContent = state.memberDoc.name || '-';
-    $('#myProfileDob').textContent = state.memberDoc.dob ? fmtDate(state.memberDoc.dob) : '-';
-    $('#myProfileMobile').textContent = state.memberDoc.mobile || '-';
-    $('#myProfileGroup').textContent = state.memberDoc.groupName || 'Unassigned';
-    $('#myProfileStatus').textContent = state.memberDoc.status || '-';
-    renderBirthdaysWidget([state.memberDoc]);
-    return;
+    $('#myProfileName').textContent = self.doc.name || '-';
+    $('#myProfileDob').textContent = self.doc.dob ? fmtDate(self.doc.dob) : '-';
+    $('#myProfileMobile').textContent = self.doc.mobile || '-';
+    $('#myProfileGroup').textContent = self.doc.groupName || 'Unassigned';
+    $('#myProfileStatus').textContent = self.doc.status || '-';
+    renderBirthdaysWidget([self.doc]);
+
+    if(self.doc.auctionInitialAmount != null && self.doc.auctionInitialAmount !== 0){
+      const initial = Number(self.doc.auctionInitialAmount) || 0;
+      const balance = self.doc.auctionBalance != null ? Number(self.doc.auctionBalance) : initial;
+      $('#myAuctionInitial').textContent = fmtMoney(initial);
+      $('#myAuctionBalance').textContent = fmtMoney(balance);
+      show($('#myAuctionWidget'));
+    } else {
+      hide($('#myAuctionWidget'));
+    }
   }
+  if(state.role==='member') return;
 
   // Admin: pull all members once for the dashboard stats
   const membersSnap = await db.collection('members').get();
@@ -1606,15 +1652,18 @@ async function createLoginForMember(oldMemberId){
 async function openMemberDetail(memberId){
   const m = state.membersCache.find(x=>x.id===memberId);
   const showFamily = state.role==='primary';
+  const showAuction = state.role==='primary';
   openModal(`
     <h2>${m.name}</h2>
     <p class="muted small">${m.mobile} · ${statusBadge(m.status||'Active')}</p>
     <div class="tabs">
       ${showFamily ? '<button class="tab-btn active" data-tab="family">Family</button>' : ''}
       <button class="tab-btn ${showFamily?'':'active'}" data-tab="payments">Payments</button>
+      ${showAuction ? '<button class="tab-btn" data-tab="auction">Auction Balance</button>' : ''}
     </div>
     ${showFamily ? '<div class="tab-panel active" id="tab-family"><p class="muted small">Loading...</p></div>' : ''}
     <div class="tab-panel ${showFamily?'':'active'}" id="tab-payments"><p class="muted small">Loading...</p></div>
+    ${showAuction ? '<div class="tab-panel" id="tab-auction"><p class="muted small">Loading...</p></div>' : ''}
   `);
   $all('.tab-btn').forEach(b=>{
     b.onclick = ()=>{
@@ -1626,6 +1675,7 @@ async function openMemberDetail(memberId){
   });
   if(showFamily) await loadFamilyTab(memberId);
   await loadPaymentsTab(memberId);
+  if(showAuction) await loadAuctionTab(memberId);
 }
 
 /* ---------- Family sub-tab ---------- */
@@ -1944,13 +1994,149 @@ async function recalcMemberStatus(memberId){
 }
 
 /* =========================================================
+   AUCTION BALANCE (ஏல நிலுவைத் தொகை) - primary admin only
+   Primary sets an initial owed amount for a member, then logs repayments
+   over time. Balance = initial amount - sum of repayments.
+   ========================================================= */
+
+async function recalcAuctionBalance(memberId){
+  try{
+    const memberSnap = await db.collection('members').doc(memberId).get();
+    const initial = (memberSnap.exists && Number(memberSnap.data().auctionInitialAmount)) || 0;
+    const txSnap = await db.collection('members').doc(memberId).collection('auctionTransactions').get();
+    let repaid = 0;
+    txSnap.forEach(d=> repaid += Number(d.data().amount)||0);
+    await db.collection('members').doc(memberId).update({ auctionBalance: initial - repaid });
+  }catch(err){
+    console.warn('Auction balance recalculation skipped:', err.message);
+  }
+}
+
+async function loadAuctionTab(memberId){
+  const panel = $('#tab-auction');
+  const memberSnap = await db.collection('members').doc(memberId).get();
+  const md = memberSnap.data() || {};
+  const initial = Number(md.auctionInitialAmount) || 0;
+  const balance = md.auctionBalance != null ? Number(md.auctionBalance) : initial;
+
+  const txSnap = await db.collection('members').doc(memberId).collection('auctionTransactions').orderBy('date','desc').get();
+  let rows = txSnap.empty ? '<p class="muted small">No repayments recorded yet.</p>' : `
+    <div class="table-wrap"><table class="data-table"><thead><tr><th>Date</th><th>Amount</th><th>Note</th><th></th></tr></thead><tbody>`;
+  txSnap.forEach(doc=>{
+    const t = doc.data();
+    if(!txSnap.empty){
+      rows += `<tr><td>${fmtDate(t.date)}</td><td>${fmtMoney(t.amount)}</td><td>${t.note||''}</td>
+        <td><button data-id="${doc.id}" class="delAuctionTx" style="color:var(--color-danger);">Delete</button></td></tr>`;
+    }
+  });
+  if(!txSnap.empty) rows += '</tbody></table></div>';
+
+  panel.innerHTML = `
+    <div class="stat-row"><span>Initial Amount</span>
+      <span>
+        <b id="auctionInitialDisplay">${fmtMoney(initial)}</b>
+        <button class="link-btn" id="editAuctionInitialBtn" style="margin-left:8px;">Edit</button>
+      </span>
+    </div>
+    <div class="stat-row stat-highlight"><span>Balance Remaining</span><b>${fmtMoney(balance)}</b></div>
+    <div id="auctionInitialForm" class="hidden" style="margin:10px 0;">
+      <label>New Initial Amount</label>
+      <input type="number" id="auctionInitialInput" min="0" value="${initial}" style="width:100%;padding:8px 10px;border:1px solid var(--color-border);border-radius:6px;">
+      <div style="margin-top:8px;display:flex;gap:8px;">
+        <button class="btn btn-ghost" id="cancelAuctionInitial">Cancel</button>
+        <button class="btn btn-secondary" id="saveAuctionInitial">Save</button>
+      </div>
+    </div>
+    <hr style="border:none;border-top:1px solid var(--color-border);margin:16px 0;">
+    <h3 style="font-size:0.95rem;margin:0 0 8px;">Repayment History</h3>
+    ${rows}
+    <form id="auctionTxForm" style="margin-top:14px;">
+      <div class="form-grid">
+        <div><label>Date <span class="required-mark">*</span></label><input type="date" id="auctionTxDate" required value="${new Date().toISOString().slice(0,10)}"></div>
+        <div><label>Amount Repaid <span class="required-mark">*</span></label><input type="number" id="auctionTxAmount" min="1" required></div>
+        <div class="full"><label>Note</label><input type="text" id="auctionTxNote" placeholder="e.g. Paid in cash after service"></div>
+      </div>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-ghost" id="downloadAuctionHistory">Download PDF</button>
+        <button type="submit" class="btn btn-secondary">+ Add Repayment</button>
+      </div>
+    </form>`;
+  wireValidationMessages(panel);
+
+  $('#editAuctionInitialBtn').onclick = ()=> $('#auctionInitialForm').classList.remove('hidden');
+  $('#cancelAuctionInitial').onclick = ()=> $('#auctionInitialForm').classList.add('hidden');
+  $('#saveAuctionInitial').onclick = async ()=>{
+    const newInitial = Number($('#auctionInitialInput').value) || 0;
+    try{
+      await db.collection('members').doc(memberId).update({ auctionInitialAmount: newInitial });
+      await recalcAuctionBalance(memberId);
+      toast('Initial amount updated', 'success');
+      await loadAuctionTab(memberId);
+    }catch(err){ toast(err.message, 'error'); }
+  };
+
+  $all('.delAuctionTx').forEach(btn=>{
+    btn.onclick = async ()=>{
+      if(!confirm('Delete this repayment record? This cannot be undone.')) return;
+      try{
+        await db.collection('members').doc(memberId).collection('auctionTransactions').doc(btn.dataset.id).delete();
+        await recalcAuctionBalance(memberId);
+        toast('Repayment deleted', 'success');
+      }catch(err){ toast(err.message, 'error'); }
+      await loadAuctionTab(memberId);
+    };
+  });
+
+  $('#auctionTxForm').onsubmit = async (e)=>{
+    e.preventDefault();
+    try{
+      await db.collection('members').doc(memberId).collection('auctionTransactions').add({
+        date: $('#auctionTxDate').value,
+        amount: Number($('#auctionTxAmount').value),
+        note: $('#auctionTxNote').value.trim()
+      });
+      await recalcAuctionBalance(memberId);
+      toast('Repayment recorded', 'success');
+    }catch(err){ toast(err.message, 'error'); }
+    await loadAuctionTab(memberId);
+  };
+
+  $('#downloadAuctionHistory').onclick = async ()=>{
+    await printAuctionHistory(memberId, md.name || '');
+  };
+}
+
+async function printAuctionHistory(memberId, memberName){
+  const memberSnap = await db.collection('members').doc(memberId).get();
+  const md = memberSnap.data() || {};
+  const initial = Number(md.auctionInitialAmount) || 0;
+  const balance = md.auctionBalance != null ? Number(md.auctionBalance) : initial;
+  const txSnap = await db.collection('members').doc(memberId).collection('auctionTransactions').orderBy('date','desc').get();
+  const rows = txSnap.docs.map(d=>{
+    const t = d.data();
+    return `<tr><td>${fmtDate(t.date)}</td><td>${fmtMoney(t.amount)}</td><td>${t.note||''}</td></tr>`;
+  }).join('');
+  const s = state.settings;
+  printReport(
+    'Auction Balance History',
+    `${memberName} — ${s.nameEn || ''} — Generated ${fmtDate(new Date())} — Initial: ${fmtMoney(initial)} — Balance Remaining: ${fmtMoney(balance)}`,
+    `<table><thead><tr><th>Date</th><th>Amount Repaid</th><th>Note</th></tr></thead><tbody>${rows || '<tr><td colspan="3">No repayments recorded yet</td></tr>'}</tbody></table>`
+  );
+}
+
+/* =========================================================
    MY PAYMENTS - month-wise grid view (member's own record)
    ========================================================= */
 
 const MONTH_LABELS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
 async function renderMyPaymentsGrid(){
-  const snap = await db.collection('members').doc(state.uid).collection('payments').get();
+  const self = getSelfMemberContext();
+  if(!self){
+    $('#myPayGrid').innerHTML = '<tbody><tr><td class="muted">No linked member profile found.</td></tr></tbody>';
+    return;
+  }
+  const snap = await db.collection('members').doc(self.id).collection('payments').get();
   const byMonth = {}; // monthKey -> 'paid' | 'pending'
   snap.forEach(doc=>{
     const p = doc.data();
@@ -2005,8 +2191,13 @@ function treeNodeHtml(f){
 
 async function renderMyFamilyTree(){
   const container = $('#myFamilyTree');
-  const rootName = state.memberDoc.name || 'You';
-  const md = state.memberDoc;
+  const self = getSelfMemberContext();
+  if(!self){
+    container.innerHTML = '<p class="tree-empty">No linked member profile found.</p>';
+    return;
+  }
+  const rootName = self.doc.name || 'You';
+  const md = self.doc;
 
   let familyDocs = [];
 
@@ -2029,13 +2220,13 @@ async function renderMyFamilyTree(){
       const famSnap = await db.collection('members').doc(md.parentMemberId).collection('family').get();
       famSnap.forEach(doc=>{
         const f = doc.data();
-        if(f.linkedMemberId !== state.uid) familyDocs.push(f); // skip the node that would just be "You" again
+        if(f.linkedMemberId !== self.id) familyDocs.push(f); // skip the node that would just be "You" again
       });
     }catch(err){
       console.warn('Could not load household details:', err.message);
     }
   } else {
-    const snap = await db.collection('members').doc(state.uid).collection('family').get();
+    const snap = await db.collection('members').doc(self.id).collection('family').get();
     snap.forEach(doc=> familyDocs.push(doc.data()));
   }
 
@@ -2170,13 +2361,21 @@ async function runReport(type){
   }
 
   if(type==='mypayments'){
-    const snap = await db.collection('members').doc(state.uid).collection('payments').orderBy('date','desc').get();
+    const self = getSelfMemberContext();
+    if(!self){ toast('No linked member profile found.', 'error'); return; }
+    const snap = await db.collection('members').doc(self.id).collection('payments').orderBy('date','desc').get();
     const rows = snap.docs.map(d=>{
       const p = d.data();
       return `<tr><td>${fmtDate(p.date)}</td><td>${p.category||''}</td><td>${p.description||''}</td><td>${fmtMoney(p.amount)}</td><td>${p.mode}</td><td>${p.confirmed?'Confirmed':'Pending'}</td></tr>`;
     }).join('');
-    printReport('My Payment History', `${state.memberDoc.name} — Generated ${fmtDate(new Date())}`,
+    printReport('My Payment History', `${self.doc.name} — Generated ${fmtDate(new Date())}`,
       `<table><thead><tr><th>Date</th><th>Category</th><th>Description</th><th>Amount</th><th>Mode</th><th>Status</th></tr></thead><tbody>${rows || '<tr><td colspan="6">No payments yet</td></tr>'}</tbody></table>`);
+  }
+
+  if(type==='auctionhistory'){
+    const self = getSelfMemberContext();
+    if(!self){ toast('No linked member profile found.', 'error'); return; }
+    await printAuctionHistory(self.id, self.doc.name || '');
   }
 }
 
@@ -2426,13 +2625,20 @@ async function renderAdminsTable(){
   state.adminsCache = snap.docs.map(d=>({id:d.id, ...d.data()}));
   const body = $('#adminsTableBody');
   body.innerHTML = '';
-  state.adminsCache.forEach(a=>{
+
+  for(const a of state.adminsCache){
     const perms = a.role==='primary' ? 'All' : Object.entries(a.permissions||{}).filter(([,v])=>v).map(([k])=>k).join(', ') || 'None';
+    const profileSnap = await db.collection('members').doc(a.id).get();
+    const hasProfile = profileSnap.exists;
     const tr = document.createElement('tr');
     tr.innerHTML = `<td>${a.name}</td><td>${a.userId||''}</td><td>${a.role}</td>
       <td>${a.role==='primary' ? '<span class="muted">All groups</span>' : (a.groupName || '<span class="muted">Unassigned</span>')}</td>
       <td>${perms}</td>
-      <td class="row-actions">${a.role!=='primary' ? '<button data-act="del">Remove</button>' : ''}</td>`;
+      <td class="row-actions">
+        <button data-act="profile">${hasProfile ? 'Edit Personal Details' : 'Add Personal Details'}</button>
+        ${a.role!=='primary' ? '<button data-act="del">Remove</button>' : ''}
+      </td>`;
+    tr.querySelector('[data-act="profile"]').onclick = ()=> openAdminPersonalProfileForm(a, hasProfile ? profileSnap.data() : null);
     if(a.role!=='primary'){
       tr.querySelector('[data-act="del"]').onclick = async ()=>{
         if(!confirm(`Revoke admin access for ${a.name}? This cannot be undone from here.`)) return;
@@ -2445,7 +2651,64 @@ async function renderAdminsTable(){
       };
     }
     body.appendChild(tr);
-  });
+  }
+}
+
+// An admin (primary or secondary) is often also an ordinary church member/believer
+// themselves - this gives their existing admin login a personal profile too (same
+// UID, both an admins/{uid} and a members/{uid} doc), so they get their own
+// My Payments / My Family views alongside their admin tools. No separate Auth
+// account or login is created - they keep signing in with their admin credentials.
+function openAdminPersonalProfileForm(admin, existing){
+  const groupOptions = state.groupsCache.map(g=>
+    `<option value="${g.id}" ${(existing&&existing.groupId===g.id)||(!existing&&admin.groupId===g.id)?'selected':''}>${g.name}</option>`).join('');
+  openModal(`
+    <h2>${existing ? 'Edit' : 'Add'} Personal Details - ${admin.name}</h2>
+    <p class="muted small">This lets ${admin.name} see their own family and payment history under their existing admin login, separate from the members/groups they manage as an admin.</p>
+    <form id="adminProfileForm">
+      <div class="form-grid">
+        <div><label>Father's / Husband's Name</label><input type="text" id="apFatherHusband" value="${existing?existing.fatherHusbandName||'':''}"></div>
+        <div><label>Date of Birth</label><input type="date" id="apDob" value="${existing?existing.dob||'':''}"></div>
+        <div><label>Mobile Number</label><input type="tel" id="apMobile" value="${existing?existing.mobile||'':''}"></div>
+        <div><label>Date Joined</label><input type="date" id="apJoined" value="${existing?existing.joinedDate||'':''}"></div>
+        <div class="full"><label>Address</label><input type="text" id="apAddress" value="${existing?existing.address||'':''}"></div>
+        <div class="full">
+          <label>Admin Group <span class="tooltip" data-tip="Which group's family tree/payment tracking this personal profile belongs under.">?</span></label>
+          <select id="apGroup">
+            <option value="">Unassigned</option>
+            ${groupOptions}
+          </select>
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-ghost" id="apCancel">Cancel</button>
+        <button type="submit" class="btn btn-primary">${existing?'Save':'Create Profile'}</button>
+      </div>
+    </form>
+  `);
+  $('#apCancel').onclick = closeModal;
+  $('#adminProfileForm').onsubmit = async (e)=>{
+    e.preventDefault();
+    const groupId = $('#apGroup').value || null;
+    const group = state.groupsCache.find(g=>g.id===groupId);
+    try{
+      await db.collection('members').doc(admin.id).set({
+        name: admin.name,
+        fatherHusbandName: $('#apFatherHusband').value.trim(),
+        dob: $('#apDob').value,
+        mobile: $('#apMobile').value.trim(),
+        joinedDate: $('#apJoined').value,
+        address: $('#apAddress').value.trim(),
+        groupId: groupId || null,
+        groupName: group ? group.name : null,
+        status: 'Active',
+        isAdminPersonalProfile: true
+      }, { merge: true });
+      closeModal();
+      toast('Personal details saved', 'success');
+      await renderAdminsTable();
+    }catch(err){ toast(err.message, 'error'); }
+  };
 }
 
 </script>
