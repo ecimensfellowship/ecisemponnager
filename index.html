@@ -1296,8 +1296,14 @@ async function renderDashboard(){
   if(state.role==='member') return;
 
   // Admin: pull all members once for the dashboard stats
-  const membersSnap = await db.collection('members').get();
-  const members = membersSnap.docs.map(d=> ({id:d.id, ...d.data()}));
+  let members = [];
+  try{
+    const membersSnap = await db.collection('members').get();
+    members = membersSnap.docs.map(d=> ({id:d.id, ...d.data()}));
+  }catch(err){
+    console.warn('Could not load members for dashboard:', err.message);
+    toast('Could not load member list for the dashboard (' + err.message + '). Try refreshing.', 'error');
+  }
   state.membersCache = members;
 
   const curMonth = monthKey(new Date());
