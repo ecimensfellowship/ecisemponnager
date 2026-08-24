@@ -2638,6 +2638,54 @@ function wireAdminModule(){
   };
 }
 
+// Re-assigns a secondary admin's group and permissions. Also the fix for a stale
+// groupId reference (e.g. left over from a deleted-and-recreated group with the
+// same name but a different document ID) - re-selecting the group here writes
+// the CURRENT group document's real ID, not just its display name.
+function openEditAdminGroupForm(admin){
+  const groupOptions = state.groupsCache.map(g=>
+    `<option value="${g.id}" ${admin.groupId===g.id?'selected':''}>${g.name}</option>`).join('');
+  const perms = admin.permissions || {};
+  openModal(`
+    <h2>Edit ${admin.name}</h2>
+    <form id="editAdminGroupForm">
+      <label>Admin Group</label>
+      <select id="eaGroup" style="width:100%;padding:8px 10px;border:1px solid var(--color-border);border-radius:6px;">
+        <option value="">No group (unrestricted by group)</option>
+        ${groupOptions}
+      </select>
+      <p class="muted small" style="margin-top:14px;">Permissions:</p>
+      <label><input type="checkbox" id="eaPermMembers" ${perms.members?'checked':''}> Manage Members</label><br>
+      <label><input type="checkbox" id="eaPermExpenses" ${perms.expenses?'checked':''}> Manage Expenses</label><br>
+      <label><input type="checkbox" id="eaPermSettings" ${perms.settings?'checked':''}> Manage Settings</label>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-ghost" id="eaCancel">Cancel</button>
+        <button type="submit" class="btn btn-primary">Save</button>
+      </div>
+    </form>
+  `);
+  $('#eaCancel').onclick = closeModal;
+  $('#editAdminGroupForm').onsubmit = async (e)=>{
+    e.preventDefault();
+    const groupId = $('#eaGroup').value || null;
+    const group = state.groupsCache.find(g=>g.id===groupId);
+    try{
+      await db.collection('admins').doc(admin.id).update({
+        groupId: groupId || null,
+        groupName: group ? group.name : null,
+        permissions: {
+          members: $('#eaPermMembers').checked,
+          expenses: $('#eaPermExpenses').checked,
+          settings: $('#eaPermSettings').checked
+        }
+      });
+      closeModal();
+      toast('Admin updated', 'success');
+      await renderAdminsTable();
+    }catch(err){ toast(err.message, 'error'); }
+  };
+}
+
 async function renderAdminsTable(){
   const snap = await db.collection('admins').get();
   state.adminsCache = snap.docs.map(d=>({id:d.id, ...d.data()}));
@@ -2654,10 +2702,12 @@ async function renderAdminsTable(){
       <td>${perms}</td>
       <td class="row-actions">
         <button data-act="profile">${hasProfile ? 'Edit Personal Details' : 'Add Personal Details'}</button>
+        ${a.role!=='primary' ? '<button data-act="editgroup">Edit Group/Permissions</button>' : ''}
         ${a.role!=='primary' ? '<button data-act="del">Remove</button>' : ''}
       </td>`;
     tr.querySelector('[data-act="profile"]').onclick = ()=> openAdminPersonalProfileForm(a, hasProfile ? profileSnap.data() : null);
     if(a.role!=='primary'){
+      tr.querySelector('[data-act="editgroup"]').onclick = ()=> openEditAdminGroupForm(a);
       tr.querySelector('[data-act="del"]').onclick = async ()=>{
         if(!confirm(`Revoke admin access for ${a.name}? This cannot be undone from here.`)) return;
         // Note: this removes the Firestore profile (revoking app access) but cannot delete
