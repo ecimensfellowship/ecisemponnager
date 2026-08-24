@@ -789,6 +789,18 @@ const storage = firebase.storage();
 
 function toEmail(userId){ return `${String(userId).trim()}@${EMAIL_DOMAIN}`; }
 
+// A secondary admin only ever needs to see their own group's members - scoping
+// the query itself (not just relying on the security rule to filter results)
+// means far fewer documents need per-document rule evaluation on a bulk read,
+// which is both faster and keeps well under Firestore's per-request read cap.
+function membersQuery(){
+  let q = db.collection('members');
+  if(state.role==='secondary' && state.adminDoc && state.adminDoc.groupId){
+    q = q.where('groupId','==', state.adminDoc.groupId);
+  }
+  return q;
+}
+
 /* ---------- App state ---------- */
 const state = {
   role: null,            // 'primary' | 'secondary' | 'member'
@@ -1298,7 +1310,7 @@ async function renderDashboard(){
   // Admin: pull all members once for the dashboard stats
   let members = [];
   try{
-    const membersSnap = await db.collection('members').get();
+    const membersSnap = await membersQuery().get();
     members = membersSnap.docs.map(d=> ({id:d.id, ...d.data()}));
   }catch(err){
     console.warn('Could not load members for dashboard:', err.message);
@@ -1370,7 +1382,7 @@ function wireMemberModule(){
 }
 
 async function renderMembersTable(){
-  const snap = await db.collection('members').orderBy('name').get();
+  const snap = await membersQuery().orderBy('name').get();
   state.membersCache = snap.docs.map(d=> ({id:d.id, ...d.data()}));
   filterMembersTable($('#memberSearch').value || '');
 }
