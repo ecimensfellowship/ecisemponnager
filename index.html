@@ -4,6 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>ECI - கொர்நேலியு ஆண்கள் ஐக்கியம்</title>
+<link rel="icon" type="image/png" id="faviconLink" href="" />
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Merriweather:wght@400;700;900&family=Inter:wght@400;500;600;700&family=Noto+Sans+Tamil:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -927,6 +928,12 @@ function setArchLogos(src){
     img.src = src;
     img.style.display = src ? 'block' : 'none';
   });
+  setFavicon(src);
+}
+
+function setFavicon(src){
+  const link = document.getElementById('faviconLink');
+  if(link && src) link.href = src;
 }
 
 async function checkBootstrapAndSettings(){
@@ -1382,8 +1389,14 @@ function wireMemberModule(){
 }
 
 async function renderMembersTable(){
-  const snap = await membersQuery().orderBy('name').get();
-  state.membersCache = snap.docs.map(d=> ({id:d.id, ...d.data()}));
+  try{
+    const snap = await membersQuery().orderBy('name').get();
+    state.membersCache = snap.docs.map(d=> ({id:d.id, ...d.data()}));
+  }catch(err){
+    console.warn('Could not load members:', err.message);
+    toast('Could not load members (' + err.message + '). Try refreshing.', 'error');
+    state.membersCache = [];
+  }
   filterMembersTable($('#memberSearch').value || '');
 }
 
@@ -2435,6 +2448,7 @@ function wireSettingsModule(){
       const logoUrl = await ref.getDownloadURL();
       await db.collection('settings').doc('public').update({ logoUrl });
       state.settings.logoUrl = logoUrl;
+      setFavicon(logoUrl);
       toast('Logo updated', 'success');
       enterApp();
     }catch(err){ toast(err.message, 'error'); }
