@@ -329,30 +329,30 @@ body{
 .pay-cell.pending{ color:#8A6D00; }
 .pay-cell.none{ color:var(--color-border); }
 
-/* ============ FAMILY TREE (member) ============ */
+/* ============ FAMILY TREE (member) - 3 generation tiers ============ */
 .family-tree{ display:flex; flex-direction:column; align-items:center; padding:30px 10px; }
+.tree-tier{
+  display:flex; flex-wrap:wrap; justify-content:center; align-items:flex-start;
+  gap:20px; position:relative;
+}
+.tree-tier + .tree-tier{ margin-top:36px; }
+.tree-tier + .tree-tier::before{
+  content:''; position:absolute; top:-36px; left:50%; transform:translateX(-1px);
+  width:2px; height:36px; background:var(--color-border);
+}
+.tree-tier-self{ align-items:center; }
 .tree-root-node{
   background:var(--color-primary); color:#fff;
   border-radius:12px; padding:14px 22px; text-align:center;
   position:relative; box-shadow:var(--shadow); font-weight:700;
+  align-self:center;
 }
 .tree-root-node .tree-sub{ font-weight:400; font-size:0.78rem; opacity:0.85; }
-.tree-root-node::after{
-  content:''; position:absolute; bottom:-28px; left:50%;
-  width:2px; height:28px; background:var(--color-border);
-}
-.tree-children{
-  display:flex; flex-wrap:wrap; justify-content:center; gap:24px;
-  position:relative; padding-top:28px; margin-top:0;
-}
 .tree-node{
   position:relative; text-align:center; width:130px;
   background:var(--color-surface); border:1px solid var(--color-border);
   border-radius:10px; padding:12px 8px; box-shadow:var(--shadow);
-}
-.tree-node::before{
-  content:''; position:absolute; top:-28px; left:50%;
-  width:2px; height:28px; background:var(--color-border);
+  align-self:center;
 }
 .tree-node .tree-photo{
   width:48px;height:48px;border-radius:50%;object-fit:cover;
@@ -493,6 +493,7 @@ button:focus-visible, input:focus-visible, a:focus-visible{
       <button class="nav-link member-only" data-view="myfamily">🌳 <span>My Family</span></button>
       <button class="nav-link admin-only" data-view="members">👥 <span>Members</span></button>
       <button class="nav-link admin-only" data-view="expenses">💸 <span>Expenses</span></button>
+      <button class="nav-link admin-only" data-view="initialentry">🏦 <span>Initial Entry</span></button>
       <button class="nav-link" data-view="reports">📄 <span>Reports</span></button>
       <button class="nav-link admin-only" data-view="settings">⚙️ <span>Settings</span></button>
       <button class="nav-link primary-admin-only" data-view="groupmgmt">🗂️ <span>Admin Groups</span></button>
@@ -630,6 +631,19 @@ button:focus-visible, input:focus-visible, a:focus-visible{
             <tbody id="expensesTableBody"></tbody>
           </table>
         </div>
+      </section>
+
+      <!-- INITIAL ENTRY (group opening/carried-forward balance, tracked across yearly admin handovers) -->
+      <section id="view-initialentry" class="view hidden">
+        <p class="muted small" style="margin-bottom:14px;">
+          Records the opening balance handed to a group's admin team - since group admins change
+          every year, this keeps a running history of what balance each admin term started with.
+        </p>
+        <div id="initialEntryGroupPicker" class="hidden" style="margin-bottom:16px;">
+          <label style="font-weight:600;font-size:0.85rem;">Group</label>
+          <select id="ieGroupSelect" style="width:100%;max-width:320px;padding:8px 10px;border:1px solid var(--color-border);border-radius:6px;"></select>
+        </div>
+        <div id="initialEntryContent"><p class="muted small">Loading...</p></div>
       </section>
 
       <!-- REPORTS -->
@@ -1215,7 +1229,7 @@ function wireNav(){
 const VIEW_TITLES = {
   dashboard:'Dashboard', members:'Members', expenses:'Expenses',
   reports:'Reports', settings:'Settings', adminmgmt:'Admin Accounts', groupmgmt:'Admin Groups',
-  mypayments:'My Payments', myfamily:'My Family'
+  mypayments:'My Payments', myfamily:'My Family', initialentry:'Initial Entry'
 };
 
 // Views only an admin (primary or secondary) should ever be able to render.
@@ -1223,7 +1237,7 @@ const VIEW_TITLES = {
 // button was correctly hidden - so a stale cached page, leftover view state,
 // or any other unexpected path can never actually show admin-only data to
 // a member.
-const ADMIN_ONLY_VIEWS = ['members','expenses','settings','adminmgmt','groupmgmt'];
+const ADMIN_ONLY_VIEWS = ['members','expenses','settings','adminmgmt','groupmgmt','initialentry'];
 
 async function switchView(view){
   const isAdminRole = state.role==='primary' || state.role==='secondary';
@@ -1245,6 +1259,7 @@ async function switchView(view){
   if(view==='dashboard') await renderDashboard();
   if(view==='mypayments') await renderMyPaymentsGrid();
   if(view==='myfamily') await renderMyFamilyTree();
+  if(view==='initialentry') await renderInitialEntryView();
 }
 
 /* =========================================================
@@ -1712,8 +1727,60 @@ async function openMemberDetail(memberId){
 /* ---------- Family sub-tab ---------- */
 const RELATIONSHIP_OPTIONS = [
   'Spouse','Son','Daughter','Father','Mother','Brother','Sister',
-  'Father-in-law','Mother-in-law','Grandfather','Grandmother','Other'
+  'Father-in-law','Mother-in-law','Son-in-law','Daughter-in-law',
+  'Grandfather','Grandmother','Grandson','Granddaughter','Other'
 ];
+
+// Edits a family member's Name/Relationship/DOB/Group in place - deliberately
+// does NOT touch photoUrl, hasLogin, or linkedMemberId, since a mistake like a
+// wrong relationship shouldn't require deleting (and breaking) a linked login.
+function openEditFamilyMemberForm(memberId, familyId, f){
+  const relOptions = RELATIONSHIP_OPTIONS.map(r=>`<option value="${r}" ${f.relationship===r?'selected':''}>${r}</option>`).join('');
+  const groupOptions = state.groupsCache.map(g=>`<option value="${g.id}" ${f.groupId===g.id?'selected':''}>${g.name}</option>`).join('');
+  openModal(`
+    <h2>Edit Family Member</h2>
+    <form id="editFamilyForm">
+      <div class="form-grid">
+        <div><label>Name <span class="required-mark">*</span></label><input type="text" id="efamName" required value="${f.name||''}"></div>
+        <div>
+          <label>Relationship <span class="required-mark">*</span></label>
+          <select id="efamRel" required>${relOptions}</select>
+        </div>
+        <div><label>Date of Birth</label><input type="date" id="efamDob" value="${f.dob||''}"></div>
+        <div class="full">
+          <label>Admin Group</label>
+          <select id="efamGroup">
+            <option value="">Same as member / unassigned</option>
+            ${groupOptions}
+          </select>
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-ghost" id="efamCancel">Cancel</button>
+        <button type="submit" class="btn btn-primary">Save Changes</button>
+      </div>
+    </form>
+  `);
+  wireValidationMessages($('#modalRoot'));
+  $('#efamCancel').onclick = closeModal;
+  $('#editFamilyForm').onsubmit = async (e)=>{
+    e.preventDefault();
+    const groupId = $('#efamGroup').value || null;
+    const group = state.groupsCache.find(g=>g.id===groupId);
+    try{
+      await db.collection('members').doc(memberId).collection('family').doc(familyId).update({
+        name: $('#efamName').value.trim(),
+        relationship: $('#efamRel').value,
+        dob: $('#efamDob').value,
+        groupId,
+        groupName: group ? group.name : null
+      });
+      closeModal();
+      toast('Family member updated', 'success');
+      await loadFamilyTab(memberId);
+    }catch(err){ toast(err.message, 'error'); }
+  };
+}
 
 async function loadFamilyTab(memberId){
   const m = state.membersCache.find(x=>x.id===memberId) || {};
@@ -1741,13 +1808,15 @@ async function loadFamilyTab(memberId){
 
   const panel = $('#tab-family');
   let itemsHtml = snap.empty ? '<p class="muted small">No family members added yet.</p>' : '';
+  const familyDataById = {};
   snap.forEach(doc=>{
     const f = doc.data();
+    familyDataById[doc.id] = f;
     itemsHtml += `
       <div class="subitem">
         <span>${f.photoUrl?`<img src="${f.photoUrl}" style="width:28px;height:28px;border-radius:50%;object-fit:cover;vertical-align:middle;margin-right:8px;">`:''}
         ${f.name} <span class="muted tiny">(${f.relationship||''}, ${fmtDate(f.dob)}${f.groupName ? ' · ' + f.groupName : ''}${f.hasLogin ? ' · has own login' : ''})</span></span>
-        ${state.role==='primary' ? `<button data-id="${doc.id}" class="delFamily" style="color:var(--color-danger);">Remove</button>` : ''}
+        ${state.role==='primary' ? `<button data-id="${doc.id}" class="editFamily">Edit</button> <button data-id="${doc.id}" class="delFamily" style="color:var(--color-danger);">Remove</button>` : ''}
       </div>`;
   });
   const relOptions = RELATIONSHIP_OPTIONS.map(r=>`<option value="${r}">${r}</option>`).join('');
@@ -1787,6 +1856,9 @@ async function loadFamilyTab(memberId){
       </div>
       <div class="modal-actions"><button type="submit" class="btn btn-secondary">+ Add Family Member</button></div>
     </form>`;
+  $all('.editFamily').forEach(btn=>{
+    btn.onclick = ()=> openEditFamilyMemberForm(memberId, btn.dataset.id, familyDataById[btn.dataset.id]);
+  });
   $all('.delFamily').forEach(btn=>{
     btn.onclick = async ()=>{
       if(!confirm('Remove this family member? This cannot be undone.')) return;
@@ -2220,6 +2292,16 @@ function treeNodeHtml(f){
     </div>`;
 }
 
+// Sorts a family member into a generation tier relative to the person whose
+// tree this is, based on their stored relationship label.
+function classifyRelationship(rel){
+  if(!rel) return 'peer';
+  const r = rel.toLowerCase();
+  if(r.includes('father') || r.includes('mother') || r.includes('grand')) return 'parent';
+  if(r.includes('son') || r.includes('daughter')) return 'child';
+  return 'peer'; // spouse, brother, sister, other
+}
+
 async function renderMyFamilyTree(){
   const container = $('#myFamilyTree');
   const self = getSelfMemberContext();
@@ -2263,15 +2345,27 @@ async function renderMyFamilyTree(){
 
   if(familyDocs.length === 0){
     container.innerHTML = `
-      <div class="tree-root-node">${rootName}<div class="tree-sub">You</div></div>
-      <p class="tree-empty" style="margin-top:40px;">No family details have been added yet. Ask your church admin to add them.</p>`;
+      <div class="tree-tier tree-tier-self"><div class="tree-root-node">${rootName}<div class="tree-sub">You</div></div></div>
+      <p class="tree-empty" style="margin-top:20px;">No family details have been added yet. Ask your church admin to add them.</p>`;
     return;
   }
 
-  const childrenHtml = familyDocs.map(treeNodeHtml).join('');
-  container.innerHTML = `
-    <div class="tree-root-node">${rootName}<div class="tree-sub">You</div></div>
-    <div class="tree-children">${childrenHtml}</div>`;
+  const parents = [], peers = [], children = [];
+  familyDocs.forEach(f=>{
+    const tier = classifyRelationship(f.relationship);
+    if(tier==='parent') parents.push(f);
+    else if(tier==='child') children.push(f);
+    else peers.push(f);
+  });
+
+  const rootNodeHtml = `<div class="tree-root-node">${rootName}<div class="tree-sub">You</div></div>`;
+
+  let html = '';
+  if(parents.length) html += `<div class="tree-tier">${parents.map(treeNodeHtml).join('')}</div>`;
+  html += `<div class="tree-tier tree-tier-self">${peers.map(treeNodeHtml).join('')}${rootNodeHtml}</div>`;
+  if(children.length) html += `<div class="tree-tier">${children.map(treeNodeHtml).join('')}</div>`;
+
+  container.innerHTML = html;
 }
 
 
@@ -2587,6 +2681,111 @@ function openGroupForm(group){
       closeModal();
       await renderGroupsTable();
     }catch(err){ toast(err.message, 'error'); }
+  };
+}
+
+/* =========================================================
+   INITIAL ENTRY (group opening/carried-forward balance,
+   tracked across yearly admin handovers) - primary and
+   group-scoped secondary admins
+   ========================================================= */
+
+async function renderInitialEntryView(){
+  const picker = $('#initialEntryGroupPicker');
+  const content = $('#initialEntryContent');
+
+  if(state.role==='primary'){
+    if(!state.groupsCache.length){
+      hide(picker);
+      content.innerHTML = '<p class="muted small">No groups exist yet. Create one under Admin Groups first.</p>';
+      return;
+    }
+    show(picker);
+    const sel = $('#ieGroupSelect');
+    sel.innerHTML = state.groupsCache.map(g=>`<option value="${g.id}">${g.name}</option>`).join('');
+    sel.onchange = ()=> loadInitialEntryForGroup(sel.value);
+    await loadInitialEntryForGroup(sel.value);
+  } else {
+    hide(picker);
+    const groupId = state.adminDoc && state.adminDoc.groupId;
+    if(!groupId){
+      content.innerHTML = '<p class="muted small">You are not assigned to a group yet. Contact your primary admin.</p>';
+      return;
+    }
+    await loadInitialEntryForGroup(groupId);
+  }
+}
+
+async function loadInitialEntryForGroup(groupId){
+  const content = $('#initialEntryContent');
+  content.innerHTML = '<p class="muted small">Loading...</p>';
+  const group = state.groupsCache.find(g=>g.id===groupId);
+  const groupName = group ? group.name : ((state.adminDoc && state.adminDoc.groupName) || '');
+
+  let entries = [];
+  try{
+    const snap = await db.collection('groups').doc(groupId).collection('initialEntries').orderBy('date','desc').get();
+    entries = snap.docs.map(d=>({id:d.id, ...d.data()}));
+  }catch(err){
+    content.innerHTML = `<p class="muted small">Could not load entries (${err.message}).</p>`;
+    return;
+  }
+
+  const latest = entries[0]; // most recent entry represents the current balance checkpoint
+  let rows = entries.length ? `<div class="table-wrap"><table class="data-table"><thead><tr><th>Date</th><th>Amount</th><th>Entered By</th><th>Note</th>${state.role==='primary'?'<th></th>':''}</tr></thead><tbody>` : '<p class="muted small">No entries recorded yet.</p>';
+  entries.forEach(t=>{
+    rows += `<tr><td>${fmtDate(t.date)}</td><td>${fmtMoney(t.amount)}</td><td>${t.enteredByName||''}</td><td>${t.note||''}</td>`;
+    if(state.role==='primary'){
+      rows += `<td><button data-id="${t.id}" class="delInitialEntry" style="color:var(--color-danger);">Delete</button></td>`;
+    }
+    rows += '</tr>';
+  });
+  if(entries.length) rows += '</tbody></table></div>';
+
+  content.innerHTML = `
+    <div class="card" style="margin-bottom:16px;max-width:340px;">
+      <div class="stat-row"><span>Group</span><b>${groupName}</b></div>
+      <div class="stat-row stat-highlight"><span>Current Balance</span><b>${latest ? fmtMoney(latest.amount) : '₹0'}</b></div>
+      ${latest ? `<p class="muted tiny" style="margin-top:6px;">As of ${fmtDate(latest.date)}, entered by ${latest.enteredByName||''}</p>` : ''}
+    </div>
+    <h3 style="font-size:0.95rem;margin:0 0 8px;">History</h3>
+    ${rows}
+    <form id="initialEntryForm" style="margin-top:14px;">
+      <div class="form-grid">
+        <div><label>Date <span class="required-mark">*</span></label><input type="date" id="ieDate" required value="${new Date().toISOString().slice(0,10)}"></div>
+        <div><label>Amount <span class="required-mark">*</span></label><input type="number" id="ieAmount" min="0" required></div>
+        <div class="full"><label>Note</label><input type="text" id="ieNote" placeholder="e.g. Handover from last year's admin team"></div>
+      </div>
+      <div class="modal-actions" style="justify-content:flex-start;">
+        <button type="submit" class="btn btn-secondary">+ Add Entry</button>
+      </div>
+    </form>`;
+  wireValidationMessages(content);
+
+  $all('.delInitialEntry').forEach(btn=>{
+    btn.onclick = async ()=>{
+      if(!confirm('Delete this entry? This cannot be undone.')) return;
+      try{
+        await db.collection('groups').doc(groupId).collection('initialEntries').doc(btn.dataset.id).delete();
+        toast('Entry deleted', 'success');
+      }catch(err){ toast(err.message, 'error'); }
+      await loadInitialEntryForGroup(groupId);
+    };
+  });
+
+  $('#initialEntryForm').onsubmit = async (e)=>{
+    e.preventDefault();
+    const enteredByName = (state.adminDoc && state.adminDoc.name) || '';
+    try{
+      await db.collection('groups').doc(groupId).collection('initialEntries').add({
+        date: $('#ieDate').value,
+        amount: Number($('#ieAmount').value),
+        note: $('#ieNote').value.trim(),
+        enteredByName
+      });
+      toast('Entry recorded', 'success');
+    }catch(err){ toast(err.message, 'error'); }
+    await loadInitialEntryForGroup(groupId);
   };
 }
 
