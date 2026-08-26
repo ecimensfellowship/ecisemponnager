@@ -669,6 +669,18 @@ button:focus-visible, input:focus-visible, a:focus-visible{
             <span class="report-icon">🔨</span>
             <span>Auction Balance History</span>
           </button>
+          <button class="report-card card group-admin-only" data-report="eventcollection">
+            <span class="report-icon">🎉</span>
+            <span>Event Collection Report</span>
+          </button>
+          <button class="report-card card group-admin-only" data-report="expensesbyyear">
+            <span class="report-icon">📆</span>
+            <span>Expenses Report (by Year)</span>
+          </button>
+          <button class="report-card card group-admin-only" data-report="initialentrybyyear">
+            <span class="report-icon">🏦</span>
+            <span>Initial Payment History (by Year)</span>
+          </button>
         </div>
       </section>
 
@@ -1402,15 +1414,27 @@ async function renderDashboard(){
 
   // Initial Entry amounts also count toward the fund total - scoped the same
   // way as everything else here, so a group admin's summary only ever reflects
-  // their own group, not the whole church's.
+  // their own group, not the whole church's. Opening-balance entries are
+  // periodic snapshots (only the latest one counts), while event-collection
+  // entries are cumulative contributions (all of them add up) - summing both
+  // types flatly would double-count old opening-balance snapshots.
+  function sumInitialEntries(docs){
+    let openingBalance = 0, eventTotal = 0, foundOpening = false;
+    const sorted = docs.slice().sort((a,b)=> new Date(b.date) - new Date(a.date));
+    sorted.forEach(t=>{
+      if(t.type === 'event') eventTotal += Number(t.amount)||0;
+      else if(!foundOpening){ openingBalance = Number(t.amount)||0; foundOpening = true; }
+    });
+    return openingBalance + eventTotal;
+  }
   try{
     if(state.role==='secondary' && state.adminDoc && state.adminDoc.groupId){
       const ieSnap = await db.collection('groups').doc(state.adminDoc.groupId).collection('initialEntries').get();
-      ieSnap.forEach(d=> collected += Number(d.data().amount)||0);
+      collected += sumInitialEntries(ieSnap.docs.map(d=>d.data()));
     } else if(state.role==='primary'){
       for(const g of state.groupsCache){
         const ieSnap = await db.collection('groups').doc(g.id).collection('initialEntries').get();
-        ieSnap.forEach(d=> collected += Number(d.data().amount)||0);
+        collected += sumInitialEntries(ieSnap.docs.map(d=>d.data()));
       }
     }
   }catch(err){
@@ -2619,6 +2643,104 @@ async function runReport(type){
     if(!self){ toast('No linked member profile found.', 'error'); return; }
     await printAuctionHistory(self.id, self.doc.name || '');
   }
+
+  if(type==='eventcollection'){
+    const groupId = state.adminDoc && state.adminDoc.groupId;
+    if(!groupId){ toast('You are not assigned to a group.', 'error'); return; }
+    let events = [];
+    try{
+      const evSnap = await db.collection('groups').doc(groupId).collection('events').orderBy('createdAt','desc').get();
+      events = evSnap.docs.map(d=>({id:d.id, ...d.data()}));
+    }catch(err){ toast(err.message, 'error'); return; }
+    if(!events.length){ toast('No events have been created yet for your group.', 'error'); return; }
+    openModal(`
+      <h2>Event Collection Report</h2>
+      <label>Select Event</label>
+      <select id="repEventSelect" style="width:100%;padding:8px 10px;border:1px solid var(--color-border);border-radius:6px;">
+        ${events.map(ev=>`<option value="${ev.id}">${ev.name}</option>`).join('')}
+      </select>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-ghost" id="repCancel">Cancel</button>
+        <button type="button" class="btn btn-primary" id="repGo">Generate</button>
+      </div>
+    `);
+    $('#repCancel').onclick = closeModal;
+    $('#repGo').onclick = async ()=>{
+      const eventId = $('#repEventSelect').value;
+      const ev = events.find(x=>x.id===eventId);
+      closeModal();
+      const snap = await db.collection('groups').doc(groupId).collection('initialEntries')
+        .where('type','==','event').where('eventId','==',eventId).orderBy('date','desc').get();
+      let total = 0;
+      const rows = snap.docs.map(d=>{
+        const t = d.data();
+        total += Number(t.amount)||0;
+        return `<tr><td>${fmtDate(t.date)}</td><td>${t.memberName||''}</td><td>${fmtMoney(t.amount)}</td><td>${t.mode||''}</td></tr>`;
+      }).join('');
+      printReport(`Event Collection Report — ${ev ? ev.name : ''}`,
+        `${churchLine} — Total Collected: ${fmtMoney(total)}`,
+        `<table><thead><tr><th>Date</th><th>Member</th><th>Amount</th><th>Mode</th></tr></thead><tbody>${rows || '<tr><td colspan="4">No collections recorded yet</td></tr>'}</tbody></table>`);
+    };
+  }
+
+  if(type==='expensesbyyear'){
+    const groupId = state.adminDoc && state.adminDoc.groupId;
+    if(!groupId){ toast('You are not assigned to a group.', 'error'); return; }
+    openYearPickerThen('Expenses Report', async (year)=>{
+      const snap = await expensesQuery().orderBy('date','desc').get();
+      let total = 0;
+      const rows = snap.docs
+        .map(d=>({id:d.id, ...d.data()}))
+        .filter(x=> (x.date||'').startsWith(String(year)))
+        .map(x=>{ total += Number(x.amount)||0; return `<tr><td>${fmtDate(x.date)}</td><td>${x.description}</td><td>${fmtMoney(x.amount)}</td></tr>`; })
+        .join('');
+      printReport(`Expenses Report — ${year}`, `${churchLine} — Total: ${fmtMoney(total)}`,
+        `<table><thead><tr><th>Date</th><th>Description</th><th>Amount</th></tr></thead><tbody>${rows || '<tr><td colspan="3">No expenses recorded for this year</td></tr>'}</tbody></table>`);
+    });
+  }
+
+  if(type==='initialentrybyyear'){
+    const groupId = state.adminDoc && state.adminDoc.groupId;
+    if(!groupId){ toast('You are not assigned to a group.', 'error'); return; }
+    openYearPickerThen('Initial Payment History Report', async (year)=>{
+      const snap = await db.collection('groups').doc(groupId).collection('initialEntries').orderBy('date','desc').get();
+      let total = 0;
+      const rows = snap.docs
+        .map(d=>({id:d.id, ...d.data()}))
+        .filter(x=> (x.date||'').startsWith(String(year)))
+        .map(t=>{
+          total += Number(t.amount)||0;
+          const details = t.type==='event' ? `${t.eventName||''} · ${t.memberName||''} · ${t.mode||''}` : (t.note||'');
+          return `<tr><td>${fmtDate(t.date)}</td><td>${t.type==='event'?'Event':'Opening'}</td><td>${fmtMoney(t.amount)}</td><td>${details}</td></tr>`;
+        }).join('');
+      printReport(`Initial Payment History Report — ${year}`, `${churchLine} — Total: ${fmtMoney(total)}`,
+        `<table><thead><tr><th>Date</th><th>Type</th><th>Amount</th><th>Details</th></tr></thead><tbody>${rows || '<tr><td colspan="4">No entries recorded for this year</td></tr>'}</tbody></table>`);
+    });
+  }
+}
+
+// Shared picker for the two "by year" reports - shows a year dropdown (current
+// year plus the previous 5), then runs the given async generator function.
+function openYearPickerThen(title, onGenerate){
+  const thisYear = new Date().getFullYear();
+  const years = Array.from({length:6}, (_,i)=> thisYear - i);
+  openModal(`
+    <h2>${title}</h2>
+    <label>Select Year</label>
+    <select id="repYearSelect" style="width:100%;padding:8px 10px;border:1px solid var(--color-border);border-radius:6px;">
+      ${years.map(y=>`<option value="${y}">${y}</option>`).join('')}
+    </select>
+    <div class="modal-actions">
+      <button type="button" class="btn btn-ghost" id="repCancel">Cancel</button>
+      <button type="button" class="btn btn-primary" id="repGo">Generate</button>
+    </div>
+  `);
+  $('#repCancel').onclick = closeModal;
+  $('#repGo').onclick = async ()=>{
+    const year = $('#repYearSelect').value;
+    closeModal();
+    await onGenerate(year);
+  };
 }
 
 /* =========================================================
@@ -2840,18 +2962,53 @@ async function loadInitialEntryForGroup(groupId){
   const groupName = group ? group.name : ((state.adminDoc && state.adminDoc.groupName) || '');
 
   let entries = [];
+  let events = [];
+  let groupMembers = [];
   try{
     const snap = await db.collection('groups').doc(groupId).collection('initialEntries').orderBy('date','desc').get();
     entries = snap.docs.map(d=>({id:d.id, ...d.data()}));
+    const evSnap = await db.collection('groups').doc(groupId).collection('events').orderBy('createdAt','desc').get();
+    events = evSnap.docs.map(d=>({id:d.id, ...d.data()}));
+    const memSnap = await db.collection('members').where('groupId','==',groupId).get();
+    groupMembers = memSnap.docs.map(d=>({id:d.id, ...d.data()}));
   }catch(err){
     content.innerHTML = `<p class="muted small">Could not load entries (${err.message}).</p>`;
     return;
   }
 
-  const latest = entries[0]; // most recent entry represents the current balance checkpoint
-  let rows = entries.length ? `<div class="table-wrap"><table class="data-table"><thead><tr><th>Date</th><th>Amount</th><th>Entered By</th><th>Note</th>${state.role==='primary'?'<th></th>':''}</tr></thead><tbody>` : '<p class="muted small">No entries recorded yet.</p>';
+  // Opening/carried-forward balance entries are periodic snapshots (only the
+  // most recent one counts as "the current opening balance"), while event
+  // collections are cumulative contributions that all add up over time - these
+  // are different things and need different math, not one flat sum.
+  let openingBalance = 0, openingBalanceDate = null, openingBalanceBy = '';
+  let eventTotal = 0;
+  let foundOpening = false;
   entries.forEach(t=>{
-    rows += `<tr><td>${fmtDate(t.date)}</td><td>${fmtMoney(t.amount)}</td><td>${t.enteredByName||''}</td><td>${t.note||''}</td>`;
+    if(t.type === 'event'){
+      eventTotal += Number(t.amount)||0;
+    } else if(!foundOpening){
+      openingBalance = Number(t.amount)||0;
+      openingBalanceDate = t.date;
+      openingBalanceBy = t.enteredByName||'';
+      foundOpening = true;
+    }
+  });
+
+  let groupExpenses = 0;
+  try{
+    const expSnap = await db.collection('expenses').where('groupId','==',groupId).get();
+    expSnap.forEach(e=> groupExpenses += Number(e.data().amount)||0);
+  }catch(err){ console.warn('Could not load group expenses for summary:', err.message); }
+
+  const combinedTotal = openingBalance + eventTotal;
+  const balanceInHand = combinedTotal - groupExpenses;
+
+  let rows = entries.length ? `<div class="table-wrap"><table class="data-table"><thead><tr><th>Date</th><th>Type</th><th>Amount</th><th>Details</th><th>Entered By</th>${state.role==='primary'?'<th></th>':''}</tr></thead><tbody>` : '<p class="muted small">No entries recorded yet.</p>';
+  entries.forEach(t=>{
+    const details = t.type==='event'
+      ? `${t.eventName||''} · ${t.memberName||''} · ${t.mode||''}`
+      : (t.note||'');
+    rows += `<tr><td>${fmtDate(t.date)}</td><td>${t.type==='event'?'Event':'Opening'}</td><td>${fmtMoney(t.amount)}</td><td>${details}</td><td>${t.enteredByName||''}</td>`;
     if(state.role==='primary'){
       rows += `<td><button data-id="${t.id}" class="delInitialEntry" style="color:var(--color-danger);">Delete</button></td>`;
     }
@@ -2859,15 +3016,28 @@ async function loadInitialEntryForGroup(groupId){
   });
   if(entries.length) rows += '</tbody></table></div>';
 
+  const eventOptions = events.map(ev=>`<option value="${ev.id}">${ev.name}</option>`).join('');
+  const memberOptions = groupMembers.map(m=>`<option value="${m.id}">${m.name}</option>`).join('');
+  let eventListRows = events.length ? '' : '<p class="muted small">No events created yet.</p>';
+  events.forEach(ev=>{
+    eventListRows += `<div class="subitem"><span>${ev.name}</span><button data-id="${ev.id}" class="delEvent" style="color:var(--color-danger);">Remove</button></div>`;
+  });
+
   content.innerHTML = `
-    <div class="card" style="margin-bottom:16px;max-width:340px;">
+    <div class="card" style="margin-bottom:16px;max-width:360px;">
       <div class="stat-row"><span>Group</span><b>${groupName}</b></div>
-      <div class="stat-row stat-highlight"><span>Current Balance</span><b>${latest ? fmtMoney(latest.amount) : '₹0'}</b></div>
-      ${latest ? `<p class="muted tiny" style="margin-top:6px;">As of ${fmtDate(latest.date)}, entered by ${latest.enteredByName||''}</p>` : ''}
+      <div class="stat-row"><span>Opening Balance</span><b>${fmtMoney(openingBalance)}</b></div>
+      <div class="stat-row"><span>Event Collections</span><b>${fmtMoney(eventTotal)}</b></div>
+      <div class="stat-row"><span>Expenses</span><b>${fmtMoney(groupExpenses)}</b></div>
+      <div class="stat-row stat-highlight"><span>Balance In Hand</span><b>${fmtMoney(balanceInHand)}</b></div>
+      ${openingBalanceDate ? `<p class="muted tiny" style="margin-top:6px;">Opening balance as of ${fmtDate(openingBalanceDate)}, entered by ${openingBalanceBy}</p>` : ''}
     </div>
+
     <h3 style="font-size:0.95rem;margin:0 0 8px;">History</h3>
     ${rows}
-    <form id="initialEntryForm" style="margin-top:14px;">
+
+    <h3 style="font-size:0.95rem;margin:20px 0 8px;">Add Opening Balance Entry</h3>
+    <form id="initialEntryForm">
       <div class="form-grid">
         <div><label>Date <span class="required-mark">*</span></label><input type="date" id="ieDate" required value="${new Date().toISOString().slice(0,10)}"></div>
         <div><label>Amount <span class="required-mark">*</span></label><input type="number" id="ieAmount" min="0" required></div>
@@ -2875,6 +3045,48 @@ async function loadInitialEntryForGroup(groupId){
       </div>
       <div class="modal-actions" style="justify-content:flex-start;">
         <button type="submit" class="btn btn-secondary">+ Add Entry</button>
+      </div>
+    </form>
+
+    <h3 style="font-size:0.95rem;margin:24px 0 8px;">Event Fund Collection</h3>
+    <div style="margin-bottom:14px;">
+      ${eventListRows}
+      <form id="eventForm" style="margin-top:8px;display:flex;gap:8px;align-items:flex-end;">
+        <div style="flex:1;">
+          <label>New Event Name</label>
+          <input type="text" id="newEventName" placeholder="e.g. Christmas Fund 2026" style="width:100%;padding:8px 10px;border:1px solid var(--color-border);border-radius:6px;">
+        </div>
+        <button type="submit" class="btn btn-secondary">+ Add Event</button>
+      </form>
+    </div>
+    <form id="eventCollectionForm">
+      <div class="form-grid">
+        <div class="full">
+          <label>Event <span class="required-mark">*</span></label>
+          <select id="ecEvent" required>
+            <option value="" disabled selected>Select an event</option>
+            ${eventOptions}
+          </select>
+        </div>
+        <div class="full">
+          <label>Member <span class="required-mark">*</span> <span class="tooltip" data-tip="Only members of this group are shown.">?</span></label>
+          <select id="ecMember" required>
+            <option value="" disabled selected>Select a member</option>
+            ${memberOptions}
+          </select>
+        </div>
+        <div><label>Date <span class="required-mark">*</span></label><input type="date" id="ecDate" required value="${new Date().toISOString().slice(0,10)}"></div>
+        <div><label>Amount <span class="required-mark">*</span></label><input type="number" id="ecAmount" min="1" required></div>
+        <div>
+          <label>Mode <span class="required-mark">*</span></label>
+          <select id="ecMode" required>
+            <option value="Cash">Cash</option>
+            <option value="Online">Online</option>
+          </select>
+        </div>
+      </div>
+      <div class="modal-actions" style="justify-content:flex-start;">
+        <button type="submit" class="btn btn-secondary">+ Record Collection</button>
       </div>
     </form>`;
   wireValidationMessages(content);
@@ -2885,6 +3097,17 @@ async function loadInitialEntryForGroup(groupId){
       try{
         await db.collection('groups').doc(groupId).collection('initialEntries').doc(btn.dataset.id).delete();
         toast('Entry deleted', 'success');
+      }catch(err){ toast(err.message, 'error'); }
+      await loadInitialEntryForGroup(groupId);
+    };
+  });
+
+  $all('.delEvent').forEach(btn=>{
+    btn.onclick = async ()=>{
+      if(!confirm('Remove this event? Past collections recorded against it are kept, just no longer selectable for new ones.')) return;
+      try{
+        await db.collection('groups').doc(groupId).collection('events').doc(btn.dataset.id).delete();
+        toast('Event removed', 'success');
       }catch(err){ toast(err.message, 'error'); }
       await loadInitialEntryForGroup(groupId);
     };
@@ -2901,6 +3124,41 @@ async function loadInitialEntryForGroup(groupId){
         enteredByName
       });
       toast('Entry recorded', 'success');
+    }catch(err){ toast(err.message, 'error'); }
+    await loadInitialEntryForGroup(groupId);
+  };
+
+  $('#eventForm').onsubmit = async (e)=>{
+    e.preventDefault();
+    const name = $('#newEventName').value.trim();
+    if(!name){ toast('Enter an event name.', 'error'); return; }
+    try{
+      await db.collection('groups').doc(groupId).collection('events').add({
+        name, createdAt: firebase.firestore.FieldValue.serverTimestamp()
+      });
+      toast('Event added', 'success');
+    }catch(err){ toast(err.message, 'error'); }
+    await loadInitialEntryForGroup(groupId);
+  };
+
+  $('#eventCollectionForm').onsubmit = async (e)=>{
+    e.preventDefault();
+    const eventId = $('#ecEvent').value;
+    const ev = events.find(x=>x.id===eventId);
+    const memberId = $('#ecMember').value;
+    const mem = groupMembers.find(x=>x.id===memberId);
+    const enteredByName = (state.adminDoc && state.adminDoc.name) || '';
+    try{
+      await db.collection('groups').doc(groupId).collection('initialEntries').add({
+        type: 'event',
+        date: $('#ecDate').value,
+        amount: Number($('#ecAmount').value),
+        eventId, eventName: ev ? ev.name : '',
+        memberId, memberName: mem ? mem.name : '',
+        mode: $('#ecMode').value,
+        enteredByName
+      });
+      toast('Collection recorded', 'success');
     }catch(err){ toast(err.message, 'error'); }
     await loadInitialEntryForGroup(groupId);
   };
