@@ -493,7 +493,7 @@ button:focus-visible, input:focus-visible, a:focus-visible{
       <button class="nav-link member-only" data-view="myfamily">🌳 <span>My Family</span></button>
       <button class="nav-link admin-only" data-view="members">👥 <span>Members</span></button>
       <button class="nav-link admin-only" data-view="expenses">💸 <span>Expenses</span></button>
-      <button class="nav-link admin-only" data-view="initialentry">🏦 <span>Initial Entry</span></button>
+      <button class="nav-link group-admin-only" data-view="initialentry">🏦 <span>Initial Entry</span></button>
       <button class="nav-link" data-view="reports">📄 <span>Reports</span></button>
       <button class="nav-link admin-only" data-view="settings">⚙️ <span>Settings</span></button>
       <button class="nav-link primary-admin-only" data-view="groupmgmt">🗂️ <span>Admin Groups</span></button>
@@ -627,7 +627,7 @@ button:focus-visible, input:focus-visible, a:focus-visible{
         </div>
         <div class="table-wrap">
           <table class="data-table">
-            <thead><tr><th>Date</th><th>Description</th><th>Amount</th><th></th></tr></thead>
+            <thead><tr><th>Date</th><th>Description</th><th>Group</th><th>Amount</th><th></th></tr></thead>
             <tbody id="expensesTableBody"></tbody>
           </table>
         </div>
@@ -810,6 +810,16 @@ function toEmail(userId){ return `${String(userId).trim()}@${EMAIL_DOMAIN}`; }
 // which is both faster and keeps well under Firestore's per-request read cap.
 function membersQuery(){
   let q = db.collection('members');
+  if(state.role==='secondary' && state.adminDoc && state.adminDoc.groupId){
+    q = q.where('groupId','==', state.adminDoc.groupId);
+  }
+  return q;
+}
+
+// Same idea for expenses - a group admin only ever needs their own group's
+// expenses, both for the list view and so the fund summary doesn't mix groups.
+function expensesQuery(){
+  let q = db.collection('expenses');
   if(state.role==='secondary' && state.adminDoc && state.adminDoc.groupId){
     q = q.where('groupId','==', state.adminDoc.groupId);
   }
@@ -1026,15 +1036,42 @@ $('#forcePwForm').addEventListener('submit', async (e)=>{
 });
 
 $('#logoutBtn').addEventListener('click', ()=>{
-  // Clear anything sensitive out of the DOM immediately on logout, rather than
-  // waiting for the next login's async setup to get around to it.
+  if(!confirm('Are you sure you want to log out?')) return;
+  // Clear anything sensitive out of the DOM immediately, then force a full page
+  // reload rather than an in-page state reset. A real reload guarantees no
+  // leftover JS state or DOM content survives (e.g. via the browser's back-forward
+  // cache showing a frozen snapshot of the logged-in page after pressing Back),
+  // and it re-runs the whole login flow fresh next time.
   ['membersTableBody','adminsTableBody','expensesTableBody','groupsTableBody'].forEach(id=>{
     const el = document.getElementById(id);
     if(el) el.innerHTML = '';
   });
   showOnly('loadingScreen');
-  auth.signOut();
+  auth.signOut().finally(()=>{ window.location.reload(); });
 });
+
+// If the browser restores this page from its back-forward cache (e.g. after
+// pressing Back), force a full reload instead of showing the frozen snapshot -
+// this is what actually prevents seeing stale authenticated content via Back
+// after logging out, on top of the full reload logout already does above.
+window.addEventListener('pageshow', function(e){
+  if(e.persisted) window.location.reload();
+});
+
+// Confirm before letting the browser's Back button/gesture leave the app -
+// pushes a guard history entry on load, and re-confirms on every subsequent
+// back attempt for as long as the person keeps choosing to stay.
+(function setupBackButtonGuard(){
+  history.pushState({ guard:true }, document.title, location.href);
+  window.addEventListener('popstate', function(){
+    const leave = confirm('Are you sure you want to go back? This will take you out of the app.');
+    if(leave){
+      window.history.back();
+    }else{
+      history.pushState({ guard:true }, document.title, location.href);
+    }
+  });
+})();
 
 wireValidationMessages(document.getElementById('bootstrapScreen'));
 wireValidationMessages(document.getElementById('loginScreen'));
@@ -1206,6 +1243,9 @@ function applyRoleVisibility(){
   $all('.primary-admin-only').forEach(el=> el.classList.toggle('hidden', state.role!=='primary'));
   const hasSelfProfile = state.role==='member' || !!state.linkedMemberDoc;
   $all('.member-only').forEach(el=> el.classList.toggle('hidden', !hasSelfProfile));
+  // Only a secondary admin with a group assigned - not primary, not a plain member.
+  const isGroupAdmin = state.role==='secondary' && !!(state.adminDoc && state.adminDoc.groupId);
+  $all('.group-admin-only').forEach(el=> el.classList.toggle('hidden', !isGroupAdmin));
 }
 
 function wireNav(){
@@ -1359,7 +1399,25 @@ async function renderDashboard(){
       .where('confirmed','==',true).get();
     paySnap.forEach(p=> collected += Number(p.data().amount)||0);
   }
-  const expSnap = await db.collection('expenses').get();
+
+  // Initial Entry amounts also count toward the fund total - scoped the same
+  // way as everything else here, so a group admin's summary only ever reflects
+  // their own group, not the whole church's.
+  try{
+    if(state.role==='secondary' && state.adminDoc && state.adminDoc.groupId){
+      const ieSnap = await db.collection('groups').doc(state.adminDoc.groupId).collection('initialEntries').get();
+      ieSnap.forEach(d=> collected += Number(d.data().amount)||0);
+    } else if(state.role==='primary'){
+      for(const g of state.groupsCache){
+        const ieSnap = await db.collection('groups').doc(g.id).collection('initialEntries').get();
+        ieSnap.forEach(d=> collected += Number(d.data().amount)||0);
+      }
+    }
+  }catch(err){
+    console.warn('Could not include initial entries in fund summary:', err.message);
+  }
+
+  const expSnap = await expensesQuery().get();
   let expenses = 0;
   expSnap.forEach(e=> expenses += Number(e.data().amount)||0);
   $('#statCollected').textContent = fmtMoney(collected);
@@ -2297,9 +2355,32 @@ function treeNodeHtml(f){
 function classifyRelationship(rel){
   if(!rel) return 'peer';
   const r = rel.toLowerCase();
-  if(r.includes('father') || r.includes('mother') || r.includes('grand')) return 'parent';
+  if(r.includes('grandson') || r.includes('granddaughter')) return 'child';
+  if(r.includes('grandfather') || r.includes('grandmother')) return 'parent';
+  if(r.includes('father') || r.includes('mother')) return 'parent';
   if(r.includes('son') || r.includes('daughter')) return 'child';
   return 'peer'; // spouse, brother, sister, other
+}
+
+// Relationship labels are stored relative to the household head (whoever's
+// family list they were added under) - e.g. Dinesh's own relationshipToHousehold
+// is "Son" (he is fd's son). When Dinesh views HIS OWN tree, showing fd's node
+// with that same word ("Your Son") would be backwards - it needs the reverse
+// relationship instead ("Your Parent"). Kept gender-neutral since we don't store
+// gender, so this is an approximation (e.g. "Parent" rather than "Father"),
+// closer to correct than the flat bug it replaces.
+const RECIPROCAL_RELATIONSHIP = {
+  'spouse':'Spouse', 'son':'Parent', 'daughter':'Parent', 'father':'Child', 'mother':'Child',
+  'brother':'Sibling', 'sister':'Sibling',
+  'father-in-law':'Child-in-law', 'mother-in-law':'Child-in-law',
+  'son-in-law':'Parent-in-law', 'daughter-in-law':'Parent-in-law',
+  'grandfather':'Grandchild', 'grandmother':'Grandchild',
+  'grandson':'Grandparent', 'granddaughter':'Grandparent',
+  'other':'Related'
+};
+function reciprocalRelationship(rel){
+  if(!rel) return '';
+  return RECIPROCAL_RELATIONSHIP[rel.trim().toLowerCase()] || rel;
 }
 
 async function renderMyFamilyTree(){
@@ -2325,7 +2406,7 @@ async function renderMyFamilyTree(){
         const head = headSnap.data();
         familyDocs.push({
           name: head.name,
-          relationship: md.relationshipToHousehold ? `Your ${md.relationshipToHousehold.toLowerCase()}` : 'Head of household',
+          relationship: md.relationshipToHousehold ? `Your ${reciprocalRelationship(md.relationshipToHousehold).toLowerCase()}` : 'Head of household',
           dob: head.dob,
           hasLogin: true
         });
@@ -2333,7 +2414,15 @@ async function renderMyFamilyTree(){
       const famSnap = await db.collection('members').doc(md.parentMemberId).collection('family').get();
       famSnap.forEach(doc=>{
         const f = doc.data();
-        if(f.linkedMemberId !== self.id) familyDocs.push(f); // skip the node that would just be "You" again
+        if(f.linkedMemberId === self.id) return; // skip the node that would just be "You" again
+        // These are stored relative to the household head, not necessarily to
+        // whoever is viewing right now - qualifying it rather than showing a
+        // possibly-wrong bare label (e.g. "Spouse" would misleadingly read as
+        // the viewer's own spouse when it's actually the head's).
+        familyDocs.push({
+          ...f,
+          relationship: headSnap.exists ? `${f.relationship || ''} (of ${headSnap.data().name})`.trim() : f.relationship
+        });
       });
     }catch(err){
       console.warn('Could not load household details:', err.message);
@@ -2375,6 +2464,21 @@ async function renderMyFamilyTree(){
 
 function wireExpenseModule(){
   $('#addExpenseBtn').onclick = ()=>{
+    // Group tagging: primary can optionally pick a group (blank = general/
+    // church-wide expense, not counted against any one group's fund summary);
+    // a secondary group admin has it silently locked to their own group.
+    let groupFieldHtml = '';
+    if(state.role==='primary'){
+      const groupOptions = state.groupsCache.map(g=>`<option value="${g.id}">${g.name}</option>`).join('');
+      groupFieldHtml = `
+        <div class="full">
+          <label>Group <span class="tooltip" data-tip="Optional. Leave blank for a general church-wide expense not counted against any one group's fund balance.">?</span></label>
+          <select id="expGroup">
+            <option value="">General (church-wide)</option>
+            ${groupOptions}
+          </select>
+        </div>`;
+    }
     openModal(`
       <h2>Add Expense</h2>
       <form id="expenseForm">
@@ -2382,6 +2486,7 @@ function wireExpenseModule(){
           <div><label>Date <span class="required-mark">*</span></label><input type="date" id="expDate" required value="${new Date().toISOString().slice(0,10)}"></div>
           <div><label>Amount <span class="required-mark">*</span></label><input type="number" id="expAmount" min="1" required></div>
           <div class="full"><label>Description <span class="required-mark">*</span></label><input type="text" id="expDesc" required></div>
+          ${groupFieldHtml}
         </div>
         <div class="modal-actions">
           <button type="button" class="btn btn-ghost" id="expCancel">Cancel</button>
@@ -2391,26 +2496,38 @@ function wireExpenseModule(){
     $('#expCancel').onclick = closeModal;
     $('#expenseForm').onsubmit = async (e)=>{
       e.preventDefault();
-      await db.collection('expenses').add({
-        date: $('#expDate').value,
-        description: $('#expDesc').value.trim(),
-        amount: Number($('#expAmount').value)
-      });
-      closeModal();
-      toast('Expense added', 'success');
-      await renderExpensesTable();
+      let groupId = null, groupName = null;
+      if(state.role==='primary'){
+        groupId = $('#expGroup').value || null;
+        const g = state.groupsCache.find(x=>x.id===groupId);
+        groupName = g ? g.name : null;
+      } else if(state.role==='secondary' && state.adminDoc && state.adminDoc.groupId){
+        groupId = state.adminDoc.groupId;
+        groupName = state.adminDoc.groupName || null;
+      }
+      try{
+        await db.collection('expenses').add({
+          date: $('#expDate').value,
+          description: $('#expDesc').value.trim(),
+          amount: Number($('#expAmount').value),
+          groupId, groupName
+        });
+        closeModal();
+        toast('Expense added', 'success');
+        await renderExpensesTable();
+      }catch(err){ toast(err.message, 'error'); }
     };
   };
 }
 
 async function renderExpensesTable(){
-  const snap = await db.collection('expenses').orderBy('date','desc').get();
+  const snap = await expensesQuery().orderBy('date','desc').get();
   const body = $('#expensesTableBody');
   body.innerHTML = '';
   snap.forEach(doc=>{
     const x = doc.data();
     const tr = document.createElement('tr');
-    tr.innerHTML = `<td>${fmtDate(x.date)}</td><td>${x.description}</td><td>${fmtMoney(x.amount)}</td>
+    tr.innerHTML = `<td>${fmtDate(x.date)}</td><td>${x.description}</td><td>${x.groupName || '<span class="muted">General</span>'}</td><td>${fmtMoney(x.amount)}</td>
       <td class="row-actions"><button data-act="del">Delete</button></td>`;
     tr.querySelector('[data-act="del"]').onclick = async ()=>{
       if(!confirm('Delete this expense record? This cannot be undone.')) return;
