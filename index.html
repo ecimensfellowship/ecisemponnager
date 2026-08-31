@@ -810,6 +810,14 @@ firebase.initializeApp(firebaseConfig);
 const secondaryApp = firebase.initializeApp(firebaseConfig, "Secondary");
 
 const auth = firebase.auth();
+// No persistence: every fresh page load (typing the URL, a hard refresh, or
+// opening a new tab) starts at the login screen and requires signing in again,
+// rather than silently continuing whatever session was active before. Pairs
+// with the back-button confirm and logout full-reload above for a
+// consistently "always re-authenticate" experience.
+auth.setPersistence(firebase.auth.Auth.Persistence.NONE).catch(function(err){
+  console.warn('Could not set auth persistence:', err.message);
+});
 const secondaryAuth = secondaryApp.auth();
 const db = firebase.firestore();
 const storage = firebase.storage();
@@ -3003,25 +3011,18 @@ async function loadInitialEntryForGroup(groupId){
   const combinedTotal = openingBalance + eventTotal;
   const balanceInHand = combinedTotal - groupExpenses;
 
-  let rows = entries.length ? `<div class="table-wrap"><table class="data-table"><thead><tr><th>Date</th><th>Type</th><th>Amount</th><th>Details</th><th>Entered By</th>${state.role==='primary'?'<th></th>':''}</tr></thead><tbody>` : '<p class="muted small">No entries recorded yet.</p>';
-  entries.forEach(t=>{
-    const details = t.type==='event'
-      ? `${t.eventName||''} · ${t.memberName||''} · ${t.mode||''}`
-      : (t.note||'');
-    rows += `<tr><td>${fmtDate(t.date)}</td><td>${t.type==='event'?'Event':'Opening'}</td><td>${fmtMoney(t.amount)}</td><td>${details}</td><td>${t.enteredByName||''}</td>`;
-    if(state.role==='primary'){
-      rows += `<td><button data-id="${t.id}" class="delInitialEntry" style="color:var(--color-danger);">Delete</button></td>`;
-    }
-    rows += '</tr>';
-  });
-  if(entries.length) rows += '</tbody></table></div>';
-
-  const eventOptions = events.map(ev=>`<option value="${ev.id}">${ev.name}</option>`).join('');
-  const memberOptions = groupMembers.map(m=>`<option value="${m.id}">${m.name}</option>`).join('');
-  let eventListRows = events.length ? '' : '<p class="muted small">No events created yet.</p>';
-  events.forEach(ev=>{
-    eventListRows += `<div class="subitem"><span>${ev.name}</span><button data-id="${ev.id}" class="delEvent" style="color:var(--color-danger);">Remove</button></div>`;
-  });
+  const renderHistoryRows = ()=>{
+    let rows = entries.length ? `<div class="table-wrap"><table class="data-table"><thead><tr><th>Date</th><th>Type</th><th>Amount</th><th>Details</th><th>Entered By</th><th></th></tr></thead><tbody>` : '<p class="muted small">No entries recorded yet.</p>';
+    entries.forEach(t=>{
+      const details = t.type==='event'
+        ? `${t.eventName||''} · ${t.memberName||''} · ${t.mode||''}`
+        : (t.note||'');
+      rows += `<tr><td>${fmtDate(t.date)}</td><td>${t.type==='event'?'Event':'Opening'}</td><td>${fmtMoney(t.amount)}</td><td>${details}</td><td>${t.enteredByName||''}</td>
+        <td><button data-id="${t.id}" class="delInitialEntry" style="color:var(--color-danger);">Delete</button></td></tr>`;
+    });
+    if(entries.length) rows += '</tbody></table></div>';
+    return rows;
+  };
 
   content.innerHTML = `
     <div class="card" style="margin-bottom:16px;max-width:360px;">
@@ -3033,134 +3034,176 @@ async function loadInitialEntryForGroup(groupId){
       ${openingBalanceDate ? `<p class="muted tiny" style="margin-top:6px;">Opening balance as of ${fmtDate(openingBalanceDate)}, entered by ${openingBalanceBy}</p>` : ''}
     </div>
 
-    <h3 style="font-size:0.95rem;margin:0 0 8px;">History</h3>
-    ${rows}
-
-    <h3 style="font-size:0.95rem;margin:20px 0 8px;">Add Opening Balance Entry</h3>
-    <form id="initialEntryForm">
-      <div class="form-grid">
-        <div><label>Date <span class="required-mark">*</span></label><input type="date" id="ieDate" required value="${new Date().toISOString().slice(0,10)}"></div>
-        <div><label>Amount <span class="required-mark">*</span></label><input type="number" id="ieAmount" min="0" required></div>
-        <div class="full"><label>Note</label><input type="text" id="ieNote" placeholder="e.g. Handover from last year's admin team"></div>
+    <div class="toolbar">
+      <h3 class="muted" style="margin:0;">History <span class="tiny muted">(${entries.length} ${entries.length===1?'entry':'entries'})</span></h3>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <button class="btn btn-ghost" id="toggleHistoryBtn">Hide</button>
+        <button class="btn btn-secondary" id="openAddOpeningBtn">+ Opening Balance</button>
+        <button class="btn btn-secondary" id="openManageEventsBtn">Manage Events</button>
+        <button class="btn btn-primary" id="openRecordCollectionBtn">+ Record Collection</button>
       </div>
-      <div class="modal-actions" style="justify-content:flex-start;">
-        <button type="submit" class="btn btn-secondary">+ Add Entry</button>
-      </div>
-    </form>
-
-    <h3 style="font-size:0.95rem;margin:24px 0 8px;">Event Fund Collection</h3>
-    <div style="margin-bottom:14px;">
-      ${eventListRows}
-      <form id="eventForm" style="margin-top:8px;display:flex;gap:8px;align-items:flex-end;">
-        <div style="flex:1;">
-          <label>New Event Name</label>
-          <input type="text" id="newEventName" placeholder="e.g. Christmas Fund 2026" style="width:100%;padding:8px 10px;border:1px solid var(--color-border);border-radius:6px;">
-        </div>
-        <button type="submit" class="btn btn-secondary">+ Add Event</button>
-      </form>
     </div>
-    <form id="eventCollectionForm">
-      <div class="form-grid">
-        <div class="full">
-          <label>Event <span class="required-mark">*</span></label>
-          <select id="ecEvent" required>
-            <option value="" disabled selected>Select an event</option>
-            ${eventOptions}
-          </select>
-        </div>
-        <div class="full">
-          <label>Member <span class="required-mark">*</span> <span class="tooltip" data-tip="Only members of this group are shown.">?</span></label>
-          <select id="ecMember" required>
-            <option value="" disabled selected>Select a member</option>
-            ${memberOptions}
-          </select>
-        </div>
-        <div><label>Date <span class="required-mark">*</span></label><input type="date" id="ecDate" required value="${new Date().toISOString().slice(0,10)}"></div>
-        <div><label>Amount <span class="required-mark">*</span></label><input type="number" id="ecAmount" min="1" required></div>
-        <div>
-          <label>Mode <span class="required-mark">*</span></label>
-          <select id="ecMode" required>
-            <option value="Cash">Cash</option>
-            <option value="Online">Online</option>
-          </select>
-        </div>
-      </div>
-      <div class="modal-actions" style="justify-content:flex-start;">
-        <button type="submit" class="btn btn-secondary">+ Record Collection</button>
-      </div>
-    </form>`;
-  wireValidationMessages(content);
+    <div id="initialEntryHistoryBody">${renderHistoryRows()}</div>
+  `;
 
-  $all('.delInitialEntry').forEach(btn=>{
-    btn.onclick = async ()=>{
-      if(!confirm('Delete this entry? This cannot be undone.')) return;
-      try{
-        await db.collection('groups').doc(groupId).collection('initialEntries').doc(btn.dataset.id).delete();
-        toast('Entry deleted', 'success');
-      }catch(err){ toast(err.message, 'error'); }
-      await loadInitialEntryForGroup(groupId);
-    };
-  });
+  function wireDeleteButtons(){
+    $all('.delInitialEntry').forEach(btn=>{
+      btn.onclick = async ()=>{
+        if(!confirm('Delete this entry? This cannot be undone.')) return;
+        try{
+          await db.collection('groups').doc(groupId).collection('initialEntries').doc(btn.dataset.id).delete();
+          toast('Entry deleted', 'success');
+        }catch(err){ toast(err.message, 'error'); }
+        await loadInitialEntryForGroup(groupId);
+      };
+    });
+  }
+  wireDeleteButtons();
 
-  $all('.delEvent').forEach(btn=>{
-    btn.onclick = async ()=>{
-      if(!confirm('Remove this event? Past collections recorded against it are kept, just no longer selectable for new ones.')) return;
-      try{
-        await db.collection('groups').doc(groupId).collection('events').doc(btn.dataset.id).delete();
-        toast('Event removed', 'success');
-      }catch(err){ toast(err.message, 'error'); }
-      await loadInitialEntryForGroup(groupId);
-    };
-  });
-
-  $('#initialEntryForm').onsubmit = async (e)=>{
-    e.preventDefault();
-    const enteredByName = (state.adminDoc && state.adminDoc.name) || '';
-    try{
-      await db.collection('groups').doc(groupId).collection('initialEntries').add({
-        date: $('#ieDate').value,
-        amount: Number($('#ieAmount').value),
-        note: $('#ieNote').value.trim(),
-        enteredByName
-      });
-      toast('Entry recorded', 'success');
-    }catch(err){ toast(err.message, 'error'); }
-    await loadInitialEntryForGroup(groupId);
+  $('#toggleHistoryBtn').onclick = ()=>{
+    const body = $('#initialEntryHistoryBody');
+    const nowHidden = body.classList.toggle('hidden');
+    $('#toggleHistoryBtn').textContent = nowHidden ? 'Show' : 'Hide';
   };
 
-  $('#eventForm').onsubmit = async (e)=>{
-    e.preventDefault();
-    const name = $('#newEventName').value.trim();
-    if(!name){ toast('Enter an event name.', 'error'); return; }
-    try{
-      await db.collection('groups').doc(groupId).collection('events').add({
-        name, createdAt: firebase.firestore.FieldValue.serverTimestamp()
-      });
-      toast('Event added', 'success');
-    }catch(err){ toast(err.message, 'error'); }
-    await loadInitialEntryForGroup(groupId);
+  $('#openAddOpeningBtn').onclick = ()=>{
+    openModal(`
+      <h2>Add Opening Balance Entry</h2>
+      <form id="initialEntryForm">
+        <label>Date <span class="required-mark">*</span></label>
+        <input type="date" id="ieDate" required value="${new Date().toISOString().slice(0,10)}" style="width:100%;padding:8px 10px;border:1px solid var(--color-border);border-radius:6px;margin-bottom:10px;">
+        <label>Amount <span class="required-mark">*</span></label>
+        <input type="number" id="ieAmount" min="0" required style="width:100%;padding:8px 10px;border:1px solid var(--color-border);border-radius:6px;margin-bottom:10px;">
+        <label>Note</label>
+        <input type="text" id="ieNote" placeholder="e.g. Handover from last year's admin team" style="width:100%;padding:8px 10px;border:1px solid var(--color-border);border-radius:6px;">
+        <div class="modal-actions">
+          <button type="button" class="btn btn-ghost" id="ieCancel">Cancel</button>
+          <button type="submit" class="btn btn-primary">Add Entry</button>
+        </div>
+      </form>
+    `);
+    $('#ieCancel').onclick = closeModal;
+    $('#initialEntryForm').onsubmit = async (e)=>{
+      e.preventDefault();
+      const enteredByName = (state.adminDoc && state.adminDoc.name) || '';
+      try{
+        await db.collection('groups').doc(groupId).collection('initialEntries').add({
+          date: $('#ieDate').value,
+          amount: Number($('#ieAmount').value),
+          note: $('#ieNote').value.trim(),
+          enteredByName
+        });
+        closeModal();
+        toast('Entry recorded', 'success');
+        await loadInitialEntryForGroup(groupId);
+      }catch(err){ toast(err.message, 'error'); }
+    };
   };
 
-  $('#eventCollectionForm').onsubmit = async (e)=>{
-    e.preventDefault();
-    const eventId = $('#ecEvent').value;
-    const ev = events.find(x=>x.id===eventId);
-    const memberId = $('#ecMember').value;
-    const mem = groupMembers.find(x=>x.id===memberId);
-    const enteredByName = (state.adminDoc && state.adminDoc.name) || '';
-    try{
-      await db.collection('groups').doc(groupId).collection('initialEntries').add({
-        type: 'event',
-        date: $('#ecDate').value,
-        amount: Number($('#ecAmount').value),
-        eventId, eventName: ev ? ev.name : '',
-        memberId, memberName: mem ? mem.name : '',
-        mode: $('#ecMode').value,
-        enteredByName
-      });
-      toast('Collection recorded', 'success');
-    }catch(err){ toast(err.message, 'error'); }
-    await loadInitialEntryForGroup(groupId);
+  $('#openManageEventsBtn').onclick = ()=>{
+    let eventListRows = events.length ? '' : '<p class="muted small">No events created yet.</p>';
+    events.forEach(ev=>{
+      eventListRows += `<div class="subitem"><span>${ev.name}</span><button data-id="${ev.id}" class="delEvent" style="color:var(--color-danger);">Remove</button></div>`;
+    });
+    openModal(`
+      <h2>Manage Events</h2>
+      <div id="eventListWrap">${eventListRows}</div>
+      <form id="eventForm" style="margin-top:14px;display:flex;gap:8px;align-items:flex-end;">
+        <div style="flex:1;">
+          <label>New Event Name <span class="required-mark">*</span></label>
+          <input type="text" id="newEventName" required placeholder="e.g. Christmas Fund 2026" style="width:100%;padding:8px 10px;border:1px solid var(--color-border);border-radius:6px;">
+        </div>
+        <button type="submit" class="btn btn-secondary">+ Add</button>
+      </form>
+      <div class="modal-actions"><button type="button" class="btn btn-ghost" id="emClose">Close</button></div>
+    `);
+    $('#emClose').onclick = closeModal;
+    $all('.delEvent').forEach(btn=>{
+      btn.onclick = async ()=>{
+        if(!confirm('Remove this event? Past collections recorded against it are kept, just no longer selectable for new ones.')) return;
+        try{
+          await db.collection('groups').doc(groupId).collection('events').doc(btn.dataset.id).delete();
+          toast('Event removed', 'success');
+          closeModal();
+          await loadInitialEntryForGroup(groupId);
+        }catch(err){ toast(err.message, 'error'); }
+      };
+    });
+    $('#eventForm').onsubmit = async (e)=>{
+      e.preventDefault();
+      const name = $('#newEventName').value.trim();
+      try{
+        await db.collection('groups').doc(groupId).collection('events').add({
+          name, createdAt: firebase.firestore.FieldValue.serverTimestamp()
+        });
+        toast('Event added', 'success');
+        closeModal();
+        await loadInitialEntryForGroup(groupId);
+      }catch(err){ toast(err.message, 'error'); }
+    };
+  };
+
+  $('#openRecordCollectionBtn').onclick = ()=>{
+    if(!events.length){ toast('Create an event first, using "Manage Events".', 'error'); return; }
+    const eventOptions = events.map(ev=>`<option value="${ev.id}">${ev.name}</option>`).join('');
+    const memberOptions = groupMembers.map(m=>`<option value="${m.id}">${m.name}</option>`).join('');
+    openModal(`
+      <h2>Record Event Collection</h2>
+      <form id="eventCollectionForm">
+        <div class="form-grid">
+          <div class="full">
+            <label>Event <span class="required-mark">*</span></label>
+            <select id="ecEvent" required>
+              <option value="" disabled selected>Select an event</option>
+              ${eventOptions}
+            </select>
+          </div>
+          <div class="full">
+            <label>Member <span class="required-mark">*</span> <span class="tooltip" data-tip="Only members of this group are shown.">?</span></label>
+            <select id="ecMember" required>
+              <option value="" disabled selected>Select a member</option>
+              ${memberOptions}
+            </select>
+          </div>
+          <div><label>Date <span class="required-mark">*</span></label><input type="date" id="ecDate" required value="${new Date().toISOString().slice(0,10)}"></div>
+          <div><label>Amount <span class="required-mark">*</span></label><input type="number" id="ecAmount" min="1" required></div>
+          <div>
+            <label>Mode <span class="required-mark">*</span></label>
+            <select id="ecMode" required>
+              <option value="Cash">Cash</option>
+              <option value="Online">Online</option>
+            </select>
+          </div>
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="btn btn-ghost" id="ecCancel">Cancel</button>
+          <button type="submit" class="btn btn-primary">Record Collection</button>
+        </div>
+      </form>
+    `);
+    $('#ecCancel').onclick = closeModal;
+    $('#eventCollectionForm').onsubmit = async (e)=>{
+      e.preventDefault();
+      const eventId = $('#ecEvent').value;
+      const ev = events.find(x=>x.id===eventId);
+      const memberId = $('#ecMember').value;
+      const mem = groupMembers.find(x=>x.id===memberId);
+      const enteredByName = (state.adminDoc && state.adminDoc.name) || '';
+      try{
+        await db.collection('groups').doc(groupId).collection('initialEntries').add({
+          type: 'event',
+          date: $('#ecDate').value,
+          amount: Number($('#ecAmount').value),
+          eventId, eventName: ev ? ev.name : '',
+          memberId, memberName: mem ? mem.name : '',
+          mode: $('#ecMode').value,
+          enteredByName
+        });
+        closeModal();
+        toast('Collection recorded', 'success');
+        await loadInitialEntryForGroup(groupId);
+      }catch(err){ toast(err.message, 'error'); }
+    };
   };
 }
 
