@@ -543,7 +543,7 @@ button:focus-visible, input:focus-visible, a:focus-visible{
             </div>
           </div>
 
-          <div class="widget card primary-admin-only">
+          <div class="widget card group-admin-only">
             <div class="widget-head">
               <h3>Payment Status <span class="tiny muted">(this month)</span></h3>
               <button class="link-btn toggle-widget" data-target="paidStatusBody">Hide</button>
@@ -564,7 +564,7 @@ button:focus-visible, input:focus-visible, a:focus-visible{
             </div>
           </div>
 
-          <div class="widget card primary-admin-only">
+          <div class="widget card group-admin-only">
             <div class="widget-head">
               <h3>Fund Summary</h3>
               <button class="link-btn toggle-widget" data-target="fundBody">Hide</button>
@@ -1402,10 +1402,12 @@ async function renderDashboard(){
 
   renderBirthdaysWidget(members);
 
-  // Payment Status and Fund Summary are primary-admin-only now (hidden via CSS
-  // above), so skip the underlying computation entirely for secondary admins -
-  // no point running these queries just to populate stats nobody will see.
-  if(state.role==='primary'){
+  // Payment Status and Fund Summary are group-admin-only now (hidden via CSS
+  // above for everyone else, including primary) - skip the underlying
+  // computation entirely unless this session is a group-scoped secondary admin,
+  // no point running these queries otherwise.
+  const isGroupAdminSession = state.role==='secondary' && state.adminDoc && state.adminDoc.groupId;
+  if(isGroupAdminSession){
     const curMonth = monthKey(new Date());
     let paid = 0, unpaid = 0;
     for(const m of members){
@@ -1424,12 +1426,11 @@ async function renderDashboard(){
       paySnap.forEach(p=> collected += Number(p.data().amount)||0);
     }
 
-    // Initial Entry amounts also count toward the fund total - scoped the same
-    // way as everything else here, so a group admin's summary only ever reflects
-    // their own group, not the whole church's. Opening-balance entries are
-    // periodic snapshots (only the latest one counts), while event-collection
-    // entries are cumulative contributions (all of them add up) - summing both
-    // types flatly would double-count old opening-balance snapshots.
+    // Initial Entry amounts also count toward the fund total, scoped to just
+    // this admin's own group. Opening-balance entries are periodic snapshots
+    // (only the latest one counts), while event-collection entries are
+    // cumulative contributions (all of them add up) - summing both types
+    // flatly would double-count old opening-balance snapshots.
     function sumInitialEntries(docs){
       let openingBalance = 0, eventTotal = 0, foundOpening = false;
       const sorted = docs.slice().sort((a,b)=> new Date(b.date) - new Date(a.date));
@@ -1440,10 +1441,8 @@ async function renderDashboard(){
       return openingBalance + eventTotal;
     }
     try{
-      for(const g of state.groupsCache){
-        const ieSnap = await db.collection('groups').doc(g.id).collection('initialEntries').get();
-        collected += sumInitialEntries(ieSnap.docs.map(d=>d.data()));
-      }
+      const ieSnap = await db.collection('groups').doc(state.adminDoc.groupId).collection('initialEntries').get();
+      collected += sumInitialEntries(ieSnap.docs.map(d=>d.data()));
     }catch(err){
       console.warn('Could not include initial entries in fund summary:', err.message);
     }
