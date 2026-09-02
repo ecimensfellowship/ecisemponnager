@@ -386,6 +386,52 @@ body{
   .main-area{margin-left:0;}
   .mobile-only{display:inline-block;}
   .form-grid{grid-template-columns:1fr;}
+
+  /* Toolbars (Initial Entry's 4-button header, Members/Expenses/Reports
+     toolbars, etc.) - stack into full-width buttons instead of squeezing
+     several side by side or wrapping unevenly. */
+  .toolbar{flex-direction:column;align-items:stretch;}
+  .toolbar > div{display:flex;flex-direction:column;gap:8px;}
+  .toolbar .btn{width:100%;}
+  .toolbar select, .toolbar input[type="search"]{width:100%;}
+  .toolbar h3{margin-bottom:4px;}
+
+  /* Row action buttons (View/Edit/Delete/Create Login etc. in tables) - wrap
+     onto multiple lines within the cell instead of forcing horizontal scroll
+     just to reach the last button. */
+  .row-actions{flex-wrap:wrap;gap:8px;}
+  .row-actions button{padding:6px 10px;}
+
+  /* Tighter modal padding and smaller table text so more content fits before
+     needing to scroll at all, on top of the horizontal scroll fallback that's
+     still there for any table that's still too wide. */
+  .modal-box{padding:16px;border-radius:10px;}
+  .modal-box h2{font-size:1.05rem;}
+  .data-table{font-size:0.82rem;}
+  .data-table th, .data-table td{padding:8px 6px;}
+
+  /* Widget grid and report grid already reflow via auto-fit, but give them a
+     bit more breathing room at this width. */
+  .widget-grid{gap:12px;}
+  .report-grid{grid-template-columns:repeat(auto-fit,minmax(140px,1fr));}
+
+  /* Family tree - center single-column on narrow screens rather than a tight
+     multi-column wrap that can feel cramped. */
+  .tree-children{gap:16px;}
+  .tree-node{width:110px;}
+
+  /* Auth cards (login, bootstrap, password reset) - a little less side margin
+     so the card itself has more usable width on small phones. */
+  .full-screen-center{padding:16px;}
+  .auth-card{padding:30px 18px 20px;}
+}
+
+@media (max-width: 480px){
+  /* Very narrow phones - drop table font size further and let the credential
+     slip / summary cards breathe without forcing zoom to read them. */
+  .data-table{font-size:0.78rem;}
+  .stat-row{font-size:0.85rem;}
+  .cred-slip{font-size:0.85rem;}
 }
 
 /* ============ PRINT (used for PDF export via browser Print > Save as PDF) ============ */
@@ -627,7 +673,7 @@ button:focus-visible, input:focus-visible, a:focus-visible{
         </div>
         <div class="table-wrap">
           <table class="data-table">
-            <thead><tr><th>Date</th><th>Description</th><th>Group</th><th>Amount</th><th></th></tr></thead>
+            <thead><tr><th>Date</th><th>Description</th><th>Group</th><th>Event</th><th>Amount</th><th></th></tr></thead>
             <tbody id="expensesTableBody"></tbody>
           </table>
         </div>
@@ -1092,6 +1138,22 @@ window.addEventListener('pageshow', function(e){
     }
   });
 })();
+
+// Confirm before a refresh (pull-to-refresh gesture, browser reload button, or
+// closing the tab) closes the app - only while actually signed in, since
+// there's nothing to warn about on the login screen itself. Browsers control
+// the wording of this prompt themselves for security reasons (a page can't
+// customize beforeunload dialog text or buttons), but choosing "Cancel" does
+// genuinely cancel the refresh/close and leaves the person exactly where they
+// were. Mobile browsers vary in how consistently they honor this for a
+// pull-to-refresh gesture specifically, though it's the standard mechanism
+// available for this and works reliably for the reload button and tab close.
+window.addEventListener('beforeunload', function(e){
+  if(state.uid){
+    e.preventDefault();
+    e.returnValue = '';
+  }
+});
 
 wireValidationMessages(document.getElementById('bootstrapScreen'));
 wireValidationMessages(document.getElementById('loginScreen'));
@@ -2080,21 +2142,54 @@ async function loadPaymentsTab(memberId){
   const snap = await db.collection('members').doc(memberId).collection('payments')
     .orderBy('date','desc').get();
   const panel = $('#tab-payments');
-  let rows = snap.empty ? '<p class="muted small">No payments recorded yet.</p>' : `
-    <div class="table-wrap"><table class="data-table"><thead><tr><th>Date</th><th>Category</th><th>Description</th><th>Amount</th><th>Mode</th><th>Status</th><th></th></tr></thead><tbody>`;
-  snap.forEach(doc=>{
-    const p = doc.data();
-    if(!snap.empty){
-      rows += `<tr>
-        <td>${fmtDate(p.date)}</td><td>${p.category||''}</td><td>${p.description||''}</td><td>${fmtMoney(p.amount)}</td>
-        <td>${p.mode}</td><td>${p.confirmed?'✅ Confirmed':'⏳ Pending'}</td>
-        <td><button data-id="${doc.id}" class="delPayment" style="color:var(--color-danger);">Delete</button></td>
-      </tr>`;
-    }
+  const payments = snap.docs.map(d=>({id:d.id, ...d.data()}));
+
+  // Group by year, most recent year first, most recent year expanded by default.
+  const byYear = {};
+  payments.forEach(p=>{
+    const year = (p.date||'').slice(0,4) || 'Unknown';
+    if(!byYear[year]) byYear[year] = [];
+    byYear[year].push(p);
   });
-  if(!snap.empty) rows += '</tbody></table></div>';
+  const years = Object.keys(byYear).sort((a,b)=> b.localeCompare(a));
+
+  const paymentCardHtml = (p)=>{
+    return `
+      <div class="subitem" style="flex-direction:column;align-items:stretch;gap:4px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+          <b>${fmtDate(p.date)}</b>
+          <div style="display:flex;align-items:center;gap:8px;">
+            <span class="tiny">${p.confirmed ? '✅ Confirmed' : '⏳ Pending'}</span>
+            <button data-id="${p.id}" class="delPayment" style="color:var(--color-danger);">Delete</button>
+          </div>
+        </div>
+        <div class="muted small">${p.category||''}${p.description ? ' · ' + p.description : ''}</div>
+        <div style="display:flex;justify-content:space-between;">
+          <span class="muted tiny">${p.mode||''}</span>
+          <b>${fmtMoney(p.amount)}</b>
+        </div>
+      </div>`;
+  };
+
+  let yearSectionsHtml = payments.length ? '' : '<p class="muted small">No payments recorded yet.</p>';
+  years.forEach((year, idx)=>{
+    const entries = byYear[year];
+    const yearTotal = entries.reduce((sum,p)=> sum + (Number(p.amount)||0), 0);
+    const expanded = idx === 0; // most recent year open by default, rest collapsed
+    yearSectionsHtml += `
+      <div style="margin-bottom:10px;">
+        <div class="toolbar" style="margin-bottom:6px;">
+          <h3 class="muted" style="margin:0;font-size:0.9rem;">${year} <span class="tiny muted">(${entries.length}, ${fmtMoney(yearTotal)})</span></h3>
+          <button class="link-btn toggle-year-payments" data-year="${year}">${expanded ? 'Hide' : 'Show'}</button>
+        </div>
+        <div id="payYear-${year}" class="${expanded ? '' : 'hidden'}">
+          ${entries.map(paymentCardHtml).join('')}
+        </div>
+      </div>`;
+  });
+
   const categoryOptions = PAYMENT_CATEGORIES.map(c=>`<option value="${c}">${c}</option>`).join('');
-  panel.innerHTML = rows + `
+  panel.innerHTML = yearSectionsHtml + `
     <form id="paymentForm" style="margin-top:14px;">
       <div class="form-grid">
         <div><label>Date <span class="required-mark">*</span></label><input type="date" id="payDate" required value="${new Date().toISOString().slice(0,10)}"></div>
@@ -2122,6 +2217,15 @@ async function loadPaymentsTab(memberId){
       <div class="modal-actions"><button type="submit" class="btn btn-secondary">+ Add Payment</button></div>
     </form>`;
   wireValidationMessages(panel);
+
+  $all('.toggle-year-payments').forEach(btn=>{
+    btn.onclick = ()=>{
+      const body = document.getElementById('payYear-' + btn.dataset.year);
+      const nowHidden = body.classList.toggle('hidden');
+      btn.textContent = nowHidden ? 'Show' : 'Hide';
+    };
+  });
+
   $all('.delPayment').forEach(btn=>{
     btn.onclick = async ()=>{
       if(!confirm('Delete this payment record? This cannot be undone.')) return;
@@ -2494,11 +2598,23 @@ async function renderMyFamilyTree(){
    ========================================================= */
 
 function wireExpenseModule(){
-  $('#addExpenseBtn').onclick = ()=>{
+  $('#addExpenseBtn').onclick = async ()=>{
     // Group tagging: primary can optionally pick a group (blank = general/
     // church-wide expense, not counted against any one group's fund summary);
     // a secondary group admin has it silently locked to their own group.
+    // Event tagging (optional, within a group): lets an expense be tied to a
+    // specific event from that group's Manage Events list, e.g. "Yercaud Trip"
+    // expenses tracked against "Yercaud Trip" collections.
     let groupFieldHtml = '';
+    let currentEvents = [];
+    const fetchEventsFor = async (groupId)=>{
+      if(!groupId) return [];
+      try{
+        const evSnap = await db.collection('groups').doc(groupId).collection('events').orderBy('createdAt','desc').get();
+        return evSnap.docs.map(d=>({id:d.id, ...d.data()}));
+      }catch(err){ console.warn('Could not load events for expense form:', err.message); return []; }
+    };
+
     if(state.role==='primary'){
       const groupOptions = state.groupsCache.map(g=>`<option value="${g.id}">${g.name}</option>`).join('');
       groupFieldHtml = `
@@ -2509,7 +2625,13 @@ function wireExpenseModule(){
             ${groupOptions}
           </select>
         </div>`;
+    } else if(state.role==='secondary' && state.adminDoc && state.adminDoc.groupId){
+      currentEvents = await fetchEventsFor(state.adminDoc.groupId);
     }
+
+    const eventOptionsHtml = (events)=> `<option value="">No specific event</option>` +
+      events.map(ev=>`<option value="${ev.id}">${ev.name}</option>`).join('');
+
     openModal(`
       <h2>Add Expense</h2>
       <form id="expenseForm">
@@ -2518,6 +2640,12 @@ function wireExpenseModule(){
           <div><label>Amount <span class="required-mark">*</span></label><input type="number" id="expAmount" min="1" required></div>
           <div class="full"><label>Description <span class="required-mark">*</span></label><input type="text" id="expDesc" required></div>
           ${groupFieldHtml}
+          <div class="full">
+            <label>Event <span class="tooltip" data-tip="Optional. Ties this expense to a specific event from Manage Events, e.g. trip or festival costs.">?</span></label>
+            <select id="expEvent">
+              ${eventOptionsHtml(currentEvents)}
+            </select>
+          </div>
         </div>
         <div class="modal-actions">
           <button type="button" class="btn btn-ghost" id="expCancel">Cancel</button>
@@ -2525,6 +2653,14 @@ function wireExpenseModule(){
         </div>
       </form>`);
     $('#expCancel').onclick = closeModal;
+
+    if(state.role==='primary'){
+      $('#expGroup').onchange = async (e)=>{
+        currentEvents = await fetchEventsFor(e.target.value);
+        $('#expEvent').innerHTML = eventOptionsHtml(currentEvents);
+      };
+    }
+
     $('#expenseForm').onsubmit = async (e)=>{
       e.preventDefault();
       let groupId = null, groupName = null;
@@ -2536,12 +2672,15 @@ function wireExpenseModule(){
         groupId = state.adminDoc.groupId;
         groupName = state.adminDoc.groupName || null;
       }
+      const eventId = $('#expEvent').value || null;
+      const ev = currentEvents.find(x=>x.id===eventId);
       try{
         await db.collection('expenses').add({
           date: $('#expDate').value,
           description: $('#expDesc').value.trim(),
           amount: Number($('#expAmount').value),
-          groupId, groupName
+          groupId, groupName,
+          eventId, eventName: ev ? ev.name : null
         });
         closeModal();
         toast('Expense added', 'success');
@@ -2558,7 +2697,7 @@ async function renderExpensesTable(){
   snap.forEach(doc=>{
     const x = doc.data();
     const tr = document.createElement('tr');
-    tr.innerHTML = `<td>${fmtDate(x.date)}</td><td>${x.description}</td><td>${x.groupName || '<span class="muted">General</span>'}</td><td>${fmtMoney(x.amount)}</td>
+    tr.innerHTML = `<td>${fmtDate(x.date)}</td><td>${x.description}</td><td>${x.groupName || '<span class="muted">General</span>'}</td><td>${x.eventName || '<span class="muted">-</span>'}</td><td>${fmtMoney(x.amount)}</td>
       <td class="row-actions"><button data-act="del">Delete</button></td>`;
     tr.querySelector('[data-act="del"]').onclick = async ()=>{
       if(!confirm('Delete this expense record? This cannot be undone.')) return;
@@ -3011,16 +3150,48 @@ async function loadInitialEntryForGroup(groupId){
   const balanceInHand = combinedTotal - groupExpenses;
 
   const renderHistoryRows = ()=>{
-    let rows = entries.length ? `<div class="table-wrap"><table class="data-table"><thead><tr><th>Date</th><th>Type</th><th>Amount</th><th>Details</th><th>Entered By</th><th></th></tr></thead><tbody>` : '<p class="muted small">No entries recorded yet.</p>';
+    if(!entries.length) return '<p class="muted small">No entries recorded yet.</p>';
+
+    // Group by event name (event-type entries) with a separate "Opening
+    // Balance" bucket for plain entries - mirrors Manage Events, so the
+    // history reads as "what came in for each thing", not just a flat log.
+    const groups = {};
+    const groupOrder = [];
     entries.forEach(t=>{
-      const details = t.type==='event'
-        ? `${t.eventName||''} · ${t.memberName||''} · ${t.mode||''}`
-        : (t.note||'');
-      rows += `<tr><td>${fmtDate(t.date)}</td><td>${t.type==='event'?'Event':'Opening'}</td><td>${fmtMoney(t.amount)}</td><td>${details}</td><td>${t.enteredByName||''}</td>
-        <td><button data-id="${t.id}" class="delInitialEntry" style="color:var(--color-danger);">Delete</button></td></tr>`;
+      const key = t.type==='event' ? (t.eventName || 'Unnamed Event') : 'Opening Balance';
+      if(!groups[key]){ groups[key] = []; groupOrder.push(key); }
+      groups[key].push(t);
     });
-    if(entries.length) rows += '</tbody></table></div>';
-    return rows;
+    // Opening Balance bucket last, event buckets in order of most recent entry.
+    groupOrder.sort((a,b)=>{
+      if(a==='Opening Balance') return 1;
+      if(b==='Opening Balance') return -1;
+      return new Date(groups[b][0].date) - new Date(groups[a][0].date);
+    });
+
+    let html = '';
+    groupOrder.forEach((key, idx)=>{
+      const groupEntries = groups[key];
+      const total = groupEntries.reduce((sum,t)=> sum + (Number(t.amount)||0), 0);
+      const expanded = idx === 0;
+      const safeId = key.replace(/[^a-zA-Z0-9]/g,'_');
+      let table = `<div class="table-wrap"><table class="data-table"><thead><tr><th>Date</th><th>Amount</th><th>Details</th><th>Entered By</th><th></th></tr></thead><tbody>`;
+      groupEntries.forEach(t=>{
+        const details = t.type==='event' ? `${t.memberName||''} · ${t.mode||''}` : (t.note||'');
+        table += `<tr><td>${fmtDate(t.date)}</td><td>${fmtMoney(t.amount)}</td><td>${details}</td><td>${t.enteredByName||''}</td>
+          <td><button data-id="${t.id}" class="delInitialEntry" style="color:var(--color-danger);">Delete</button></td></tr>`;
+      });
+      table += '</tbody></table></div>';
+      html += `
+        <div style="margin-bottom:10px;">
+          <div class="toolbar" style="margin-bottom:6px;">
+            <h3 class="muted" style="margin:0;font-size:0.9rem;">${key} <span class="tiny muted">(${groupEntries.length}, ${fmtMoney(total)})</span></h3>
+            <button class="link-btn toggle-history-group" data-key="${safeId}">${expanded ? 'Hide' : 'Show'}</button>
+          </div>
+          <div id="histGroup-${safeId}" class="${expanded ? '' : 'hidden'}">${table}</div>
+        </div>`;
+    });
+    return html;
   };
 
   content.innerHTML = `
@@ -3054,6 +3225,13 @@ async function loadInitialEntryForGroup(groupId){
           toast('Entry deleted', 'success');
         }catch(err){ toast(err.message, 'error'); }
         await loadInitialEntryForGroup(groupId);
+      };
+    });
+    $all('.toggle-history-group').forEach(btn=>{
+      btn.onclick = ()=>{
+        const body = document.getElementById('histGroup-' + btn.dataset.key);
+        const nowHidden = body.classList.toggle('hidden');
+        btn.textContent = nowHidden ? 'Show' : 'Hide';
       };
     });
   }
