@@ -3259,7 +3259,20 @@ async function loadInitialEntryForGroup(groupId){
     expSnap.forEach(e=> groupExpenses += Number(e.data().amount)||0);
   }catch(err){ console.warn('Could not load group expenses for summary:', err.message); }
 
-  const combinedTotal = openingBalance + eventTotal;
+  // Regular member subscription payments also count toward this group's
+  // balance, same as the group admin's Dashboard fund summary - previously
+  // this screen only counted Opening Balance and Event Collections, leaving
+  // subscription payments out of the total shown here.
+  let subscriptionTotal = 0;
+  try{
+    for(const m of groupMembers){
+      const paySnap = await db.collection('members').doc(m.id).collection('payments')
+        .where('confirmed','==',true).get();
+      paySnap.forEach(p=> subscriptionTotal += Number(p.data().amount)||0);
+    }
+  }catch(err){ console.warn('Could not load subscription payments for summary:', err.message); }
+
+  const combinedTotal = openingBalance + eventTotal + subscriptionTotal;
   const balanceInHand = combinedTotal - groupExpenses;
 
   const renderHistoryRows = ()=>{
@@ -3312,6 +3325,7 @@ async function loadInitialEntryForGroup(groupId){
       <div class="stat-row"><span>Group</span><b>${groupName}</b></div>
       <div class="stat-row"><span>Opening Balance</span><b>${fmtMoney(openingBalance)}</b></div>
       <div class="stat-row"><span>Event Collections</span><b>${fmtMoney(eventTotal)}</b></div>
+      <div class="stat-row"><span>Subscription Payments</span><b>${fmtMoney(subscriptionTotal)}</b></div>
       <div class="stat-row"><span>Expenses</span><b>${fmtMoney(groupExpenses)}</b></div>
       <div class="stat-row stat-highlight"><span>Balance In Hand</span><b>${fmtMoney(balanceInHand)}</b></div>
       ${openingBalanceDate ? `<p class="muted tiny" style="margin-top:6px;">Opening balance as of ${fmtDate(openingBalanceDate)}, entered by ${openingBalanceBy}</p>` : ''}
