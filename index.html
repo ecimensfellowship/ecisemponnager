@@ -642,6 +642,12 @@ button:focus-visible, input:focus-visible, a:focus-visible{
         <div class="table-wrap">
           <table class="data-table" id="myPayGrid"><tbody></tbody></table>
         </div>
+
+        <h3 class="muted" style="margin:24px 0 10px;">Payment Details</h3>
+        <div id="myPayDetails"><p class="muted small">Loading...</p></div>
+
+        <h3 class="muted" style="margin:24px 0 10px;">Event Collections <span class="tiny muted">(other than regular subscription)</span></h3>
+        <div id="myEventCollections"><p class="muted small">Loading...</p></div>
       </section>
 
       <!-- MY FAMILY (member, tree view) -->
@@ -2430,12 +2436,14 @@ async function renderMyPaymentsGrid(){
   const self = getSelfMemberContext();
   if(!self){
     $('#myPayGrid').innerHTML = '<tbody><tr><td class="muted">No linked member profile found.</td></tr></tbody>';
+    $('#myPayDetails').innerHTML = '';
+    $('#myEventCollections').innerHTML = '';
     return;
   }
-  const snap = await db.collection('members').doc(self.id).collection('payments').get();
+  const snap = await db.collection('members').doc(self.id).collection('payments').orderBy('date','desc').get();
+  const payments = snap.docs.map(d=>({id:d.id, ...d.data()}));
   const byMonth = {}; // monthKey -> 'paid' | 'pending'
-  snap.forEach(doc=>{
-    const p = doc.data();
+  payments.forEach(p=>{
     if(!p.monthKey) return;
     if(p.confirmed) byMonth[p.monthKey] = 'paid';
     else if(!byMonth[p.monthKey]) byMonth[p.monthKey] = 'pending';
@@ -2465,6 +2473,94 @@ async function renderMyPaymentsGrid(){
     $('#myPayGrid').innerHTML = `<thead>${head}</thead><tbody>${row}</tbody>`;
   }
   paintGrid(Number(yearSel.value));
+
+  // Payment Details - grouped by year, same card treatment as the admin's
+  // Payments tab, so this reads consistently across the app.
+  const detailsByYear = {};
+  payments.forEach(p=>{
+    const year = (p.date||'').slice(0,4) || 'Unknown';
+    if(!detailsByYear[year]) detailsByYear[year] = [];
+    detailsByYear[year].push(p);
+  });
+  const detailYears = Object.keys(detailsByYear).sort((a,b)=> b.localeCompare(a));
+  let detailsHtml = payments.length ? '' : '<p class="muted small">No payments recorded yet.</p>';
+  detailYears.forEach((year, idx)=>{
+    const entries = detailsByYear[year];
+    const total = entries.reduce((sum,p)=> sum + (Number(p.amount)||0), 0);
+    const expanded = idx === 0;
+    const cards = entries.map(p=> `
+      <div class="subitem" style="flex-direction:column;align-items:stretch;gap:4px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+          <b>${fmtDate(p.date)}</b>
+          <span class="tiny">${p.confirmed ? '✅ Confirmed' : '🕓 Pending'}</span>
+        </div>
+        <div class="muted small">${p.category||''}${p.description ? ' · ' + p.description : ''}</div>
+        <div style="display:flex;justify-content:space-between;">
+          <span class="muted tiny">${p.mode||''}</span>
+          <b>${fmtMoney(p.amount)}</b>
+        </div>
+      </div>`).join('');
+    detailsHtml += `
+      <div style="margin-bottom:10px;">
+        <div class="toolbar" style="margin-bottom:6px;">
+          <h3 class="muted" style="margin:0;font-size:0.9rem;">${year} <span class="tiny muted">(${entries.length}, ${fmtMoney(total)})</span></h3>
+          <button class="link-btn toggle-mypay-year" data-year="${year}">${expanded ? 'Hide' : 'Show'}</button>
+        </div>
+        <div id="myPayDetailYear-${year}" class="${expanded ? '' : 'hidden'}">${cards}</div>
+      </div>`;
+  });
+  $('#myPayDetails').innerHTML = detailsHtml;
+  $all('.toggle-mypay-year').forEach(btn=>{
+    btn.onclick = ()=>{
+      const body = document.getElementById('myPayDetailYear-' + btn.dataset.year);
+      const nowHidden = body.classList.toggle('hidden');
+      btn.textContent = nowHidden ? 'Show' : 'Hide';
+    };
+  });
+
+  // Event Collections - amounts paid toward named group events (e.g. a trip or
+  // festival fund), separate from regular subscription payments, grouped by
+  // event name. Only applies if this member belongs to a group.
+  const eventWrap = $('#myEventCollections');
+  if(!self.doc.groupId){
+    eventWrap.innerHTML = '<p class="muted small">Not applicable - you are not assigned to a group.</p>';
+  }else{
+    try{
+      const evColSnap = await db.collection('groups').doc(self.doc.groupId).collection('initialEntries')
+        .where('type','==','event').where('memberId','==',self.id).orderBy('date','desc').get();
+      const eventPayments = evColSnap.docs.map(d=>d.data());
+      if(!eventPayments.length){
+        eventWrap.innerHTML = '<p class="muted small">No event collections recorded for you yet.</p>';
+      }else{
+        const byEvent = {};
+        eventPayments.forEach(t=>{
+          const key = t.eventName || 'Unnamed Event';
+          if(!byEvent[key]) byEvent[key] = [];
+          byEvent[key].push(t);
+        });
+        let html = '';
+        Object.keys(byEvent).forEach(key=>{
+          const entries = byEvent[key];
+          const total = entries.reduce((sum,t)=> sum + (Number(t.amount)||0), 0);
+          const cards = entries.map(t=> `
+            <div class="subitem" style="flex-direction:column;align-items:stretch;gap:4px;">
+              <div style="display:flex;justify-content:space-between;">
+                <b>${fmtDate(t.date)}</b><b>${fmtMoney(t.amount)}</b>
+              </div>
+              <div class="muted tiny">${t.mode||''}</div>
+            </div>`).join('');
+          html += `
+            <div style="margin-bottom:10px;">
+              <h4 style="margin:0 0 6px;font-size:0.88rem;">${key} <span class="tiny muted">(${entries.length}, ${fmtMoney(total)})</span></h4>
+              ${cards}
+            </div>`;
+        });
+        eventWrap.innerHTML = html;
+      }
+    }catch(err){
+      eventWrap.innerHTML = `<p class="muted small">Could not load event collections (${err.message}).</p>`;
+    }
+  }
 }
 
 /* =========================================================
@@ -2780,8 +2876,25 @@ async function runReport(type){
       const p = d.data();
       return `<tr><td>${fmtDate(p.date)}</td><td>${p.category||''}</td><td>${p.description||''}</td><td>${fmtMoney(p.amount)}</td><td>${p.mode}</td><td>${p.confirmed?'Confirmed':'Pending'}</td></tr>`;
     }).join('');
+
+    let eventSection = '';
+    if(self.doc.groupId){
+      try{
+        const evColSnap = await db.collection('groups').doc(self.doc.groupId).collection('initialEntries')
+          .where('type','==','event').where('memberId','==',self.id).orderBy('date','desc').get();
+        if(!evColSnap.empty){
+          const eventRows = evColSnap.docs.map(d=>{
+            const t = d.data();
+            return `<tr><td>${fmtDate(t.date)}</td><td>${t.eventName||''}</td><td>${fmtMoney(t.amount)}</td><td>${t.mode||''}</td></tr>`;
+          }).join('');
+          eventSection = `<h3 style="margin-top:20px;">Event Collections</h3>
+            <table><thead><tr><th>Date</th><th>Event</th><th>Amount</th><th>Mode</th></tr></thead><tbody>${eventRows}</tbody></table>`;
+        }
+      }catch(err){ console.warn('Could not include event collections in report:', err.message); }
+    }
+
     printReport('My Payment History', `${self.doc.name} — Generated ${fmtDate(new Date())}`,
-      `<table><thead><tr><th>Date</th><th>Category</th><th>Description</th><th>Amount</th><th>Mode</th><th>Status</th></tr></thead><tbody>${rows || '<tr><td colspan="6">No payments yet</td></tr>'}</tbody></table>`);
+      `<table><thead><tr><th>Date</th><th>Category</th><th>Description</th><th>Amount</th><th>Mode</th><th>Status</th></tr></thead><tbody>${rows || '<tr><td colspan="6">No payments yet</td></tr>'}</tbody></table>${eventSection}`);
   }
 
   if(type==='auctionhistory'){
