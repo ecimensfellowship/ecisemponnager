@@ -1475,7 +1475,7 @@ async function renderDashboard(){
 
     if(self.doc.groupId){
       try{
-        const fs = await computeGroupFundSummary(self.doc.groupId);
+        const fs = await computeGroupFundSummary(self.doc.groupId, self.doc.groupName);
         $('#mgfGroupName').textContent = fs.groupName;
         $('#mgfOpening').textContent = fmtMoney(fs.openingBalance);
         $('#mgfEvents').textContent = fmtMoney(fs.eventTotal);
@@ -3257,9 +3257,9 @@ async function renderInitialEntryView(){
 // Opening Balance (latest snapshot) + Event Collections (all summed) +
 // Subscription Payments (all confirmed payments from the group's members) -
 // Expenses (tagged to this group) = Balance In Hand.
-async function computeGroupFundSummary(groupId){
+async function computeGroupFundSummary(groupId, fallbackGroupName){
   const group = state.groupsCache.find(g=>g.id===groupId);
-  const groupName = group ? group.name : ((state.adminDoc && state.adminDoc.groupName) || (state.linkedMemberDoc && state.linkedMemberDoc.groupName) || '');
+  const groupName = group ? group.name : (fallbackGroupName || (state.adminDoc && state.adminDoc.groupName) || (state.linkedMemberDoc && state.linkedMemberDoc.groupName) || '');
 
   let entries = [];
   try{
