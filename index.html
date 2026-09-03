@@ -589,6 +589,21 @@ button:focus-visible, input:focus-visible, a:focus-visible{
             </div>
           </div>
 
+          <div class="widget card member-only hidden" id="myGroupFundWidget">
+            <div class="widget-head">
+              <h3>Group Fund Summary</h3>
+            </div>
+            <div class="widget-body">
+              <div class="stat-row">Group: <b id="mgfGroupName">-</b></div>
+              <div class="stat-row">Opening Balance: <b id="mgfOpening">₹0</b></div>
+              <div class="stat-row">Event Collections: <b id="mgfEvents">₹0</b></div>
+              <div class="stat-row">Subscription Payments: <b id="mgfSubscriptions">₹0</b></div>
+              <div class="stat-row">Expenses: <b id="mgfExpenses">₹0</b></div>
+              <div class="stat-row stat-highlight">Balance In Hand: <b id="mgfBalance">₹0</b></div>
+              <p class="muted tiny" id="mgfFootnote" style="margin-top:6px;"></p>
+            </div>
+          </div>
+
           <div class="widget card group-admin-only">
             <div class="widget-head">
               <h3>Payment Status <span class="tiny muted">(this month)</span></h3>
@@ -862,12 +877,15 @@ firebase.initializeApp(firebaseConfig);
 const secondaryApp = firebase.initializeApp(firebaseConfig, "Secondary");
 
 const auth = firebase.auth();
-// No persistence: every fresh page load (typing the URL, a hard refresh, or
-// opening a new tab) starts at the login screen and requires signing in again,
-// rather than silently continuing whatever session was active before. Pairs
-// with the back-button confirm and logout full-reload above for a
-// consistently "always re-authenticate" experience.
-auth.setPersistence(firebase.auth.Auth.Persistence.NONE).catch(function(err){
+// SESSION persistence: the login survives a refresh (F5, pull-to-refresh, or
+// retyping the URL in the same tab) so people don't get logged out just from
+// reloading the page - but it's cleared the moment the tab or browser closes,
+// so a genuinely new session still starts at the login screen. (An earlier
+// version used NONE persistence, which required signing in again after every
+// single refresh - too disruptive in practice, since a reload is
+// indistinguishable from a fresh visit at the browser level.) Pairs with the
+// back-button confirm and logout full-reload above.
+auth.setPersistence(firebase.auth.Auth.Persistence.SESSION).catch(function(err){
   console.warn('Could not set auth persistence:', err.message);
 });
 const secondaryAuth = secondaryApp.auth();
@@ -1453,6 +1471,26 @@ async function renderDashboard(){
       show($('#myAuctionWidget'));
     } else {
       hide($('#myAuctionWidget'));
+    }
+
+    if(self.doc.groupId){
+      try{
+        const fs = await computeGroupFundSummary(self.doc.groupId);
+        $('#mgfGroupName').textContent = fs.groupName;
+        $('#mgfOpening').textContent = fmtMoney(fs.openingBalance);
+        $('#mgfEvents').textContent = fmtMoney(fs.eventTotal);
+        $('#mgfSubscriptions').textContent = fmtMoney(fs.subscriptionTotal);
+        $('#mgfExpenses').textContent = fmtMoney(fs.groupExpenses);
+        $('#mgfBalance').textContent = fmtMoney(fs.balanceInHand);
+        $('#mgfFootnote').textContent = fs.openingBalanceDate
+          ? `Opening balance as of ${fmtDate(fs.openingBalanceDate)}, entered by ${fs.openingBalanceBy}` : '';
+        show($('#myGroupFundWidget'));
+      }catch(err){
+        console.warn('Could not load group fund summary:', err.message);
+        hide($('#myGroupFundWidget'));
+      }
+    } else {
+      hide($('#myGroupFundWidget'));
     }
   }
   if(state.role==='member') return;
@@ -3212,6 +3250,59 @@ async function renderInitialEntryView(){
     }
     await loadInitialEntryForGroup(groupId);
   }
+}
+
+// Shared by the group admin's Initial Entry screen and the member-facing
+// "Group Fund Summary" dashboard widget, so both always agree on the math:
+// Opening Balance (latest snapshot) + Event Collections (all summed) +
+// Subscription Payments (all confirmed payments from the group's members) -
+// Expenses (tagged to this group) = Balance In Hand.
+async function computeGroupFundSummary(groupId){
+  const group = state.groupsCache.find(g=>g.id===groupId);
+  const groupName = group ? group.name : ((state.adminDoc && state.adminDoc.groupName) || (state.linkedMemberDoc && state.linkedMemberDoc.groupName) || '');
+
+  let entries = [];
+  try{
+    const snap = await db.collection('groups').doc(groupId).collection('initialEntries').orderBy('date','desc').get();
+    entries = snap.docs.map(d=>d.data());
+  }catch(err){ console.warn('Could not load initial entries:', err.message); }
+
+  let openingBalance = 0, openingBalanceDate = null, openingBalanceBy = '';
+  let eventTotal = 0, foundOpening = false;
+  entries.forEach(t=>{
+    if(t.type === 'event'){
+      eventTotal += Number(t.amount)||0;
+    } else if(!foundOpening){
+      openingBalance = Number(t.amount)||0;
+      openingBalanceDate = t.date;
+      openingBalanceBy = t.enteredByName||'';
+      foundOpening = true;
+    }
+  });
+
+  let groupMembers = [];
+  try{
+    const memSnap = await db.collection('members').where('groupId','==',groupId).get();
+    groupMembers = memSnap.docs.map(d=>({id:d.id, ...d.data()}));
+  }catch(err){ console.warn('Could not load group members:', err.message); }
+
+  let subscriptionTotal = 0;
+  try{
+    for(const m of groupMembers){
+      const paySnap = await db.collection('members').doc(m.id).collection('payments')
+        .where('confirmed','==',true).get();
+      paySnap.forEach(p=> subscriptionTotal += Number(p.data().amount)||0);
+    }
+  }catch(err){ console.warn('Could not load subscription payments:', err.message); }
+
+  let groupExpenses = 0;
+  try{
+    const expSnap = await db.collection('expenses').where('groupId','==',groupId).get();
+    expSnap.forEach(e=> groupExpenses += Number(e.data().amount)||0);
+  }catch(err){ console.warn('Could not load group expenses:', err.message); }
+
+  const balanceInHand = openingBalance + eventTotal + subscriptionTotal - groupExpenses;
+  return { groupName, entries, groupMembers, openingBalance, openingBalanceDate, openingBalanceBy, eventTotal, subscriptionTotal, groupExpenses, balanceInHand };
 }
 
 async function loadInitialEntryForGroup(groupId){
