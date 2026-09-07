@@ -752,6 +752,14 @@ button:focus-visible, input:focus-visible, a:focus-visible{
             <span class="report-icon">⏳</span>
             <span>Pending Payments Report</span>
           </button>
+          <button class="report-card card admin-only" data-report="statuswise">
+            <span class="report-icon">📊</span>
+            <span>Member Status Report</span>
+          </button>
+          <button class="report-card card admin-only" data-report="statuswise">
+            <span class="report-icon">📊</span>
+            <span>Status-wise Payment Report</span>
+          </button>
           <button class="report-card card member-only" data-report="mypayments">
             <span class="report-icon">🧾</span>
             <span>My Payment History</span>
@@ -2945,6 +2953,37 @@ async function runReport(type){
     }
     printReport('Pending Payments Report — This Month', churchLine,
       `<table><thead><tr><th>Name</th><th>Mobile</th><th>Status</th></tr></thead><tbody>${rows || '<tr><td colspan="3">Everyone has paid this month 🎉</td></tr>'}</tbody></table>`);
+  }
+
+  if(type==='statuswise'){
+    // Fixed period per request: January 2025 through the current month,
+    // regardless of when each member actually joined - counts how many of
+    // those months have no confirmed payment on record at all.
+    const startYear = 2025, startMonth = 1;
+    const now = new Date();
+    const totalMonths = (now.getFullYear() - startYear) * 12 + (now.getMonth() + 1 - startMonth) + 1;
+
+    let rows = '';
+    for(const m of state.membersCache){
+      const paidMonths = new Set();
+      try{
+        const paySnap = await db.collection('members').doc(m.id).collection('payments')
+          .where('confirmed','==',true).get();
+        paySnap.forEach(p=>{ if(p.data().monthKey) paidMonths.add(p.data().monthKey); });
+      }catch(err){ console.warn('Could not load payments for', m.name, err.message); }
+
+      let pendingCount = 0;
+      for(let i=0; i<totalMonths; i++){
+        const y = startYear + Math.floor((startMonth - 1 + i) / 12);
+        const mo = ((startMonth - 1 + i) % 12) + 1;
+        const mk = `${y}-${String(mo).padStart(2,'0')}`;
+        if(!paidMonths.has(mk)) pendingCount++;
+      }
+      rows += `<tr><td>${m.name}</td><td>${m.groupName||'-'}</td><td>${m.mobile}</td><td>${pendingCount}</td><td>${m.status||''}</td></tr>`;
+    }
+
+    printReport('Member Status Report', `${churchLine} — Period: Jan 2025 to ${fmtDate(now)}`,
+      `<table><thead><tr><th>Member Name</th><th>Group</th><th>Mobile No</th><th>Total Pending Months</th><th>Status</th></tr></thead><tbody>${rows || '<tr><td colspan="5">No members found</td></tr>'}</tbody></table>`);
   }
 
   if(type==='mypayments'){
