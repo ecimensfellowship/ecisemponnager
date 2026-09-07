@@ -752,13 +752,9 @@ button:focus-visible, input:focus-visible, a:focus-visible{
             <span class="report-icon">⏳</span>
             <span>Pending Payments Report</span>
           </button>
-          <button class="report-card card admin-only" data-report="statuswise">
+          <button class="report-card card primary-admin-only" data-report="statuswise">
             <span class="report-icon">📊</span>
             <span>Member Status Report</span>
-          </button>
-          <button class="report-card card admin-only" data-report="statuswise">
-            <span class="report-icon">📊</span>
-            <span>Status-wise Payment Report</span>
           </button>
           <button class="report-card card member-only" data-report="mypayments">
             <span class="report-icon">🧾</span>
@@ -1165,6 +1161,11 @@ $('#forcePwForm').addEventListener('submit', async (e)=>{
 
 $('#logoutBtn').addEventListener('click', ()=>{
   if(!confirm('Are you sure you want to log out?')) return;
+  // Clear the session flag the beforeunload guard checks BEFORE reloading -
+  // the person already confirmed intent to leave via the line above, so the
+  // browser's own "Reload site? Changes may not be saved" prompt on top of
+  // that would just be a redundant second confirmation for the same action.
+  state.uid = null;
   // Clear anything sensitive out of the DOM immediately, then force a full page
   // reload rather than an in-page state reset. A real reload guarantees no
   // leftover JS state or DOM content survives (e.g. via the browser's back-forward
