@@ -752,7 +752,7 @@ button:focus-visible, input:focus-visible, a:focus-visible{
             <span class="report-icon">⏳</span>
             <span>Pending Payments Report</span>
           </button>
-          <button class="report-card card primary-admin-only" data-report="statuswise">
+          <button class="report-card card group-admin-only" data-report="statuswise">
             <span class="report-icon">📊</span>
             <span>Member Status Report</span>
           </button>
@@ -2963,8 +2963,9 @@ async function runReport(type){
     const startYear = 2025, startMonth = 1;
     const now = new Date();
     const totalMonths = (now.getFullYear() - startYear) * 12 + (now.getMonth() + 1 - startMonth) + 1;
+    const statusOrder = { 'Active':0, 'Suspended':1, 'Inactive':2 };
 
-    let rows = '';
+    const results = [];
     for(const m of state.membersCache){
       const paidMonths = new Set();
       try{
@@ -2980,11 +2981,24 @@ async function runReport(type){
         const mk = `${y}-${String(mo).padStart(2,'0')}`;
         if(!paidMonths.has(mk)) pendingCount++;
       }
-      rows += `<tr><td>${m.name}</td><td>${m.groupName||'-'}</td><td>${m.mobile}</td><td>${pendingCount}</td><td>${m.status||''}</td></tr>`;
+      results.push({ member: m, pendingCount });
     }
 
+    results.sort((a,b)=>{
+      const oa = statusOrder[a.member.status] ?? 99;
+      const ob = statusOrder[b.member.status] ?? 99;
+      if(oa !== ob) return oa - ob;
+      return (a.member.name||'').localeCompare(b.member.name||'');
+    });
+
+    let rows = '';
+    results.forEach((r, idx)=>{
+      const m = r.member;
+      rows += `<tr><td>${idx+1}</td><td>${m.name}</td><td>${m.groupName||'-'}</td><td>${m.mobile}</td><td>${r.pendingCount}</td><td>${m.status||''}</td></tr>`;
+    });
+
     printReport('Member Status Report', `${churchLine} — Period: Jan 2025 to ${fmtDate(now)}`,
-      `<table><thead><tr><th>Member Name</th><th>Group</th><th>Mobile No</th><th>Total Pending Months</th><th>Status</th></tr></thead><tbody>${rows || '<tr><td colspan="5">No members found</td></tr>'}</tbody></table>`);
+      `<table><thead><tr><th>Sl.No</th><th>Member Name</th><th>Group</th><th>Mobile No</th><th>Total Pending Months</th><th>Status</th></tr></thead><tbody>${rows || '<tr><td colspan="6">No members found</td></tr>'}</tbody></table>`);
   }
 
   if(type==='mypayments'){
