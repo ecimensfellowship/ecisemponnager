@@ -2502,15 +2502,18 @@ async function printAuctionHistory(memberId, memberName){
   const initial = Number(md.auctionInitialAmount) || 0;
   const balance = md.auctionBalance != null ? Number(md.auctionBalance) : initial;
   const txSnap = await db.collection('members').doc(memberId).collection('auctionTransactions').orderBy('date','desc').get();
-  const rows = txSnap.docs.map(d=>{
+  let total = 0;
+  const rows = txSnap.docs.map((d,idx)=>{
     const t = d.data();
-    return `<tr><td>${fmtDate(t.date)}</td><td>${fmtMoney(t.amount)}</td><td>${t.note||''}</td></tr>`;
+    total += Number(t.amount)||0;
+    return `<tr><td>${idx+1}</td><td>${fmtDate(t.date)}</td><td>${fmtMoney(t.amount)}</td><td>${t.note||''}</td></tr>`;
   }).join('');
+  const totalRowHtml = txSnap.docs.length ? `<tr style="font-weight:700;"><td colspan="2">Total Repaid</td><td>${fmtMoney(total)}</td><td></td></tr>` : '';
   const s = state.settings;
   printReport(
     'Auction Balance History',
     `${memberName} — ${s.nameEn || ''} — Generated ${fmtDate(new Date())} — Initial: ${fmtMoney(initial)} — Balance Remaining: ${fmtMoney(balance)}`,
-    `<table><thead><tr><th>Date</th><th>Amount Repaid</th><th>Note</th></tr></thead><tbody>${rows || '<tr><td colspan="3">No repayments recorded yet</td></tr>'}</tbody></table>`
+    `<table><thead><tr><th>Sl.No</th><th>Date</th><th>Amount Repaid</th><th>Note</th></tr></thead><tbody>${rows || '<tr><td colspan="4">No repayments recorded yet</td></tr>'}${totalRowHtml}</tbody></table>`
   );
 }
 
@@ -2922,38 +2925,45 @@ async function runReport(type){
   const churchLine = `${s.nameEn || ''} ${s.nameTa ? '· ' + s.nameTa : ''} — Generated ${fmtDate(new Date())}`;
 
   if(type==='members'){
-    const rows = state.membersCache.map(m=>`
-      <tr><td>${m.name}</td><td>${m.mobile}</td><td>${m.status}</td><td>${fmtDate(m.joinedDate)}</td></tr>`).join('');
+    const sorted = state.membersCache.slice().sort((a,b)=> (a.name||'').localeCompare(b.name||''));
+    const rows = sorted.map((m,idx)=>`
+      <tr><td>${idx+1}</td><td>${m.name}</td><td>${m.mobile}</td><td>${m.status}</td><td>${fmtDate(m.joinedDate)}</td></tr>`).join('');
     printReport('Member Entry Report', churchLine,
-      `<table><thead><tr><th>Name</th><th>Mobile</th><th>Status</th><th>Joined</th></tr></thead><tbody>${rows}</tbody></table>`);
+      `<table><thead><tr><th>Sl.No</th><th>Name</th><th>Mobile</th><th>Status</th><th>Joined</th></tr></thead><tbody>${rows}</tbody></table>`);
   }
 
   if(type==='family'){
+    const sortedMembers = state.membersCache.slice().sort((a,b)=> (a.name||'').localeCompare(b.name||''));
     let rows = '';
-    for(const m of state.membersCache){
+    let sl = 0;
+    for(const m of sortedMembers){
       const famSnap = await db.collection('members').doc(m.id).collection('family').get();
-      if(famSnap.empty){ rows += `<tr><td>${m.name}</td><td colspan="3" class="muted">No family details</td></tr>`; continue; }
+      if(famSnap.empty){ sl++; rows += `<tr><td>${sl}</td><td>${m.name}</td><td colspan="3" class="muted">No family details</td></tr>`; continue; }
       famSnap.forEach(doc=>{
+        sl++;
         const f = doc.data();
-        rows += `<tr><td>${m.name}</td><td>${f.name}</td><td>${f.relationship||''}</td><td>${fmtDate(f.dob)}</td></tr>`;
+        rows += `<tr><td>${sl}</td><td>${m.name}</td><td>${f.name}</td><td>${f.relationship||''}</td><td>${fmtDate(f.dob)}</td></tr>`;
       });
     }
     printReport('Family Details Report', churchLine,
-      `<table><thead><tr><th>Member</th><th>Family Member</th><th>Relationship</th><th>DOB</th></tr></thead><tbody>${rows}</tbody></table>`);
+      `<table><thead><tr><th>Sl.No</th><th>Member</th><th>Family Member</th><th>Relationship</th><th>DOB</th></tr></thead><tbody>${rows}</tbody></table>`);
   }
 
   if(type==='pending'){
     const curMonth = monthKey(new Date());
+    const sortedForPending = state.membersCache.slice().sort((a,b)=> (a.name||'').localeCompare(b.name||''));
     let rows = '';
-    for(const m of state.membersCache){
+    let sl = 0;
+    for(const m of sortedForPending){
       const paySnap = await db.collection('members').doc(m.id).collection('payments')
         .where('monthKey','==',curMonth).where('confirmed','==',true).limit(1).get();
       if(paySnap.empty){
-        rows += `<tr><td>${m.name}</td><td>${m.mobile}</td><td>${m.status}</td></tr>`;
+        sl++;
+        rows += `<tr><td>${sl}</td><td>${m.name}</td><td>${m.mobile}</td><td>${m.status}</td></tr>`;
       }
     }
     printReport('Pending Payments Report — This Month', churchLine,
-      `<table><thead><tr><th>Name</th><th>Mobile</th><th>Status</th></tr></thead><tbody>${rows || '<tr><td colspan="3">Everyone has paid this month 🎉</td></tr>'}</tbody></table>`);
+      `<table><thead><tr><th>Sl.No</th><th>Name</th><th>Mobile</th><th>Status</th></tr></thead><tbody>${rows || '<tr><td colspan="4">Everyone has paid this month 🎉</td></tr>'}</tbody></table>`);
   }
 
   if(type==='statuswise'){
@@ -3005,10 +3015,13 @@ async function runReport(type){
     const self = getSelfMemberContext();
     if(!self){ toast('No linked member profile found.', 'error'); return; }
     const snap = await db.collection('members').doc(self.id).collection('payments').orderBy('date','desc').get();
-    const rows = snap.docs.map(d=>{
+    let total = 0;
+    const rows = snap.docs.map((d,idx)=>{
       const p = d.data();
-      return `<tr><td>${fmtDate(p.date)}</td><td>${p.category||''}</td><td>${p.description||''}</td><td>${fmtMoney(p.amount)}</td><td>${p.mode}</td><td>${p.confirmed?'Confirmed':'Pending'}</td></tr>`;
+      total += Number(p.amount)||0;
+      return `<tr><td>${idx+1}</td><td>${fmtDate(p.date)}</td><td>${p.category||''}</td><td>${p.description||''}</td><td>${fmtMoney(p.amount)}</td><td>${p.mode}</td><td>${p.confirmed?'Confirmed':'Pending'}</td></tr>`;
     }).join('');
+    const totalRowHtml = snap.docs.length ? `<tr style="font-weight:700;"><td colspan="4">Total</td><td>${fmtMoney(total)}</td><td colspan="2"></td></tr>` : '';
 
     let eventSection = '';
     if(self.doc.groupId){
@@ -3016,18 +3029,22 @@ async function runReport(type){
         const evColSnap = await db.collection('groups').doc(self.doc.groupId).collection('initialEntries')
           .where('type','==','event').where('memberId','==',self.id).orderBy('date','desc').get();
         if(!evColSnap.empty){
-          const eventRows = evColSnap.docs.map(d=>{
+          let eventTotal = 0;
+          const eventRows = evColSnap.docs.map((d,idx)=>{
             const t = d.data();
-            return `<tr><td>${fmtDate(t.date)}</td><td>${t.eventName||''}</td><td>${fmtMoney(t.amount)}</td><td>${t.mode||''}</td></tr>`;
+            eventTotal += Number(t.amount)||0;
+            return `<tr><td>${idx+1}</td><td>${fmtDate(t.date)}</td><td>${t.eventName||''}</td><td>${fmtMoney(t.amount)}</td><td>${t.mode||''}</td></tr>`;
           }).join('');
           eventSection = `<h3 style="margin-top:20px;">Event Collections</h3>
-            <table><thead><tr><th>Date</th><th>Event</th><th>Amount</th><th>Mode</th></tr></thead><tbody>${eventRows}</tbody></table>`;
+            <table><thead><tr><th>Sl.No</th><th>Date</th><th>Event</th><th>Amount</th><th>Mode</th></tr></thead><tbody>${eventRows}
+            <tr style="font-weight:700;"><td colspan="3">Total</td><td>${fmtMoney(eventTotal)}</td><td></td></tr>
+            </tbody></table>`;
         }
       }catch(err){ console.warn('Could not include event collections in report:', err.message); }
     }
 
     printReport('My Payment History', `${self.doc.name} — Generated ${fmtDate(new Date())}`,
-      `<table><thead><tr><th>Date</th><th>Category</th><th>Description</th><th>Amount</th><th>Mode</th><th>Status</th></tr></thead><tbody>${rows || '<tr><td colspan="6">No payments yet</td></tr>'}</tbody></table>${eventSection}`);
+      `<table><thead><tr><th>Sl.No</th><th>Date</th><th>Category</th><th>Description</th><th>Amount</th><th>Mode</th><th>Status</th></tr></thead><tbody>${rows || '<tr><td colspan="7">No payments yet</td></tr>'}${totalRowHtml}</tbody></table>${eventSection}`);
   }
 
   if(type==='auctionhistory'){
@@ -3061,17 +3078,25 @@ async function runReport(type){
       const eventId = $('#repEventSelect').value;
       const ev = events.find(x=>x.id===eventId);
       closeModal();
-      const snap = await db.collection('groups').doc(groupId).collection('initialEntries')
-        .where('type','==','event').where('eventId','==',eventId).orderBy('date','desc').get();
-      let total = 0;
-      const rows = snap.docs.map(d=>{
-        const t = d.data();
-        total += Number(t.amount)||0;
-        return `<tr><td>${fmtDate(t.date)}</td><td>${t.memberName||''}</td><td>${fmtMoney(t.amount)}</td><td>${t.mode||''}</td></tr>`;
-      }).join('');
-      printReport(`Event Collection Report — ${ev ? ev.name : ''}`,
-        `${churchLine} — Total Collected: ${fmtMoney(total)}`,
-        `<table><thead><tr><th>Date</th><th>Member</th><th>Amount</th><th>Mode</th></tr></thead><tbody>${rows || '<tr><td colspan="4">No collections recorded yet</td></tr>'}</tbody></table>`);
+      // Wrapped in try/catch (this was missing before) - without it, a failure
+      // here (e.g. a Firestore index still building) meant the button appeared
+      // to do nothing at all, with no visible error.
+      try{
+        const snap = await db.collection('groups').doc(groupId).collection('initialEntries')
+          .where('type','==','event').where('eventId','==',eventId).orderBy('date','desc').get();
+        let total = 0;
+        const sortedEntries = snap.docs.map(d=>d.data()).sort((a,b)=> (a.memberName||'').localeCompare(b.memberName||''));
+        const rows = sortedEntries.map((t,idx)=>{
+          total += Number(t.amount)||0;
+          return `<tr><td>${idx+1}</td><td>${fmtDate(t.date)}</td><td>${t.memberName||''}</td><td>${fmtMoney(t.amount)}</td><td>${t.mode||''}</td></tr>`;
+        }).join('');
+        const totalRowHtml = sortedEntries.length ? `<tr style="font-weight:700;"><td colspan="3">Total</td><td>${fmtMoney(total)}</td><td></td></tr>` : '';
+        printReport(`Event Collection Report — ${ev ? ev.name : ''}`,
+          `${churchLine} — Total Collected: ${fmtMoney(total)}`,
+          `<table><thead><tr><th>Sl.No</th><th>Date</th><th>Member</th><th>Amount</th><th>Mode</th></tr></thead><tbody>${rows || '<tr><td colspan="5">No collections recorded yet</td></tr>'}${totalRowHtml}</tbody></table>`);
+      }catch(err){
+        toast('Could not generate report: ' + err.message, 'error');
+      }
     };
   }
 
@@ -3079,15 +3104,15 @@ async function runReport(type){
     const groupId = state.adminDoc && state.adminDoc.groupId;
     if(!groupId){ toast('You are not assigned to a group.', 'error'); return; }
     openYearPickerThen('Expenses Report', async (year)=>{
-      const snap = await expensesQuery().orderBy('date','desc').get();
-      let total = 0;
-      const rows = snap.docs
-        .map(d=>({id:d.id, ...d.data()}))
-        .filter(x=> (x.date||'').startsWith(String(year)))
-        .map(x=>{ total += Number(x.amount)||0; return `<tr><td>${fmtDate(x.date)}</td><td>${x.description}</td><td>${fmtMoney(x.amount)}</td></tr>`; })
-        .join('');
-      printReport(`Expenses Report — ${year}`, `${churchLine} — Total: ${fmtMoney(total)}`,
-        `<table><thead><tr><th>Date</th><th>Description</th><th>Amount</th></tr></thead><tbody>${rows || '<tr><td colspan="3">No expenses recorded for this year</td></tr>'}</tbody></table>`);
+      try{
+        const snap = await expensesQuery().orderBy('date','desc').get();
+        let total = 0;
+        const filtered = snap.docs.map(d=>({id:d.id, ...d.data()})).filter(x=> (x.date||'').startsWith(String(year)));
+        const rows = filtered.map((x,idx)=>{ total += Number(x.amount)||0; return `<tr><td>${idx+1}</td><td>${fmtDate(x.date)}</td><td>${x.description}</td><td>${fmtMoney(x.amount)}</td></tr>`; }).join('');
+        const totalRowHtml = filtered.length ? `<tr style="font-weight:700;"><td colspan="3">Total</td><td>${fmtMoney(total)}</td></tr>` : '';
+        printReport(`Expenses Report — ${year}`, `${churchLine} — Total: ${fmtMoney(total)}`,
+          `<table><thead><tr><th>Sl.No</th><th>Date</th><th>Description</th><th>Amount</th></tr></thead><tbody>${rows || '<tr><td colspan="4">No expenses recorded for this year</td></tr>'}${totalRowHtml}</tbody></table>`);
+      }catch(err){ toast('Could not generate report: ' + err.message, 'error'); }
     });
   }
 
@@ -3095,18 +3120,19 @@ async function runReport(type){
     const groupId = state.adminDoc && state.adminDoc.groupId;
     if(!groupId){ toast('You are not assigned to a group.', 'error'); return; }
     openYearPickerThen('Initial Payment History Report', async (year)=>{
-      const snap = await db.collection('groups').doc(groupId).collection('initialEntries').orderBy('date','desc').get();
-      let total = 0;
-      const rows = snap.docs
-        .map(d=>({id:d.id, ...d.data()}))
-        .filter(x=> (x.date||'').startsWith(String(year)))
-        .map(t=>{
+      try{
+        const snap = await db.collection('groups').doc(groupId).collection('initialEntries').orderBy('date','desc').get();
+        let total = 0;
+        const filtered = snap.docs.map(d=>({id:d.id, ...d.data()})).filter(x=> (x.date||'').startsWith(String(year)));
+        const rows = filtered.map((t,idx)=>{
           total += Number(t.amount)||0;
           const details = t.type==='event' ? `${t.eventName||''} · ${t.memberName||''} · ${t.mode||''}` : (t.note||'');
-          return `<tr><td>${fmtDate(t.date)}</td><td>${t.type==='event'?'Event':'Opening'}</td><td>${fmtMoney(t.amount)}</td><td>${details}</td></tr>`;
+          return `<tr><td>${idx+1}</td><td>${fmtDate(t.date)}</td><td>${t.type==='event'?'Event':'Opening'}</td><td>${fmtMoney(t.amount)}</td><td>${details}</td></tr>`;
         }).join('');
-      printReport(`Initial Payment History Report — ${year}`, `${churchLine} — Total: ${fmtMoney(total)}`,
-        `<table><thead><tr><th>Date</th><th>Type</th><th>Amount</th><th>Details</th></tr></thead><tbody>${rows || '<tr><td colspan="4">No entries recorded for this year</td></tr>'}</tbody></table>`);
+        const totalRowHtml = filtered.length ? `<tr style="font-weight:700;"><td colspan="3">Total</td><td>${fmtMoney(total)}</td><td></td></tr>` : '';
+        printReport(`Initial Payment History Report — ${year}`, `${churchLine} — Total: ${fmtMoney(total)}`,
+          `<table><thead><tr><th>Sl.No</th><th>Date</th><th>Type</th><th>Amount</th><th>Details</th></tr></thead><tbody>${rows || '<tr><td colspan="5">No entries recorded for this year</td></tr>'}${totalRowHtml}</tbody></table>`);
+      }catch(err){ toast('Could not generate report: ' + err.message, 'error'); }
     });
   }
 }
