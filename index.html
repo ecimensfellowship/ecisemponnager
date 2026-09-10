@@ -176,11 +176,12 @@ body{
 }
 .accordion-header{
   display:flex;justify-content:space-between;align-items:center;gap:8px;
-  padding:12px 14px;cursor:pointer;background:var(--color-bg);
+  padding:12px 14px;cursor:pointer;background:rgba(30,58,95,0.09);
   font-weight:700;color:var(--color-primary-dark);font-size:0.9rem;
   -webkit-tap-highlight-color:transparent;user-select:none;
 }
-.accordion-header:hover{filter:brightness(0.98);}
+.accordion-header:hover{background:rgba(30,58,95,0.15);}
+.accordion-header.open{background:rgba(30,58,95,0.15);}
 .accordion-header .accordion-chevron{
   transition:transform 0.2s ease;flex-shrink:0;color:var(--color-muted);
 }
@@ -1074,6 +1075,26 @@ function openModal(innerHtml){
 }
 function closeModal(){ $('#modalRoot').innerHTML = ''; }
 
+// Replacement for the browser's native confirm() - that dialog always shows
+// the page's domain in its title ("ecimensfellowship.github.io says"), which
+// a webpage has no ability to change (a deliberate browser security measure,
+// not something fixable in code). This uses our own modal instead, so the
+// title can say whatever we want.
+function customConfirm(message, title){
+  return new Promise((resolve)=>{
+    openModal(`
+      <h2>${title || 'Alert'}</h2>
+      <p>${message}</p>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-ghost" id="ccCancel">Cancel</button>
+        <button type="button" class="btn btn-primary" id="ccOk">OK</button>
+      </div>
+    `);
+    $('#ccCancel').onclick = ()=>{ closeModal(); resolve(false); };
+    $('#ccOk').onclick = ()=>{ closeModal(); resolve(true); };
+  });
+}
+
 /* ---------- Screen switching ---------- */
 function showOnly(id){
   ['loadingScreen','bootstrapScreen','loginScreen','forcePwScreen','appShell'].forEach(s=>{
@@ -1181,23 +1202,38 @@ $('#forcePwForm').addEventListener('submit', async (e)=>{
 });
 
 $('#logoutBtn').addEventListener('click', ()=>{
-  if(!confirm('Are you sure you want to log out?')) return;
-  // Clear the session flag the beforeunload guard checks BEFORE reloading -
-  // the person already confirmed intent to leave via the line above, so the
-  // browser's own "Reload site? Changes may not be saved" prompt on top of
-  // that would just be a redundant second confirmation for the same action.
-  state.uid = null;
-  // Clear anything sensitive out of the DOM immediately, then force a full page
-  // reload rather than an in-page state reset. A real reload guarantees no
-  // leftover JS state or DOM content survives (e.g. via the browser's back-forward
-  // cache showing a frozen snapshot of the logged-in page after pressing Back),
-  // and it re-runs the whole login flow fresh next time.
-  ['membersTableBody','adminsTableBody','expensesTableBody','groupsTableBody'].forEach(id=>{
-    const el = document.getElementById(id);
-    if(el) el.innerHTML = '';
-  });
-  showOnly('loadingScreen');
-  auth.signOut().finally(()=>{ window.location.reload(); });
+  // Using our own modal here instead of the browser's native confirm() - a
+  // native confirm's title ("<yoursite> says") is controlled entirely by the
+  // browser for security reasons and can't be changed to anything else by any
+  // website, no matter what text is passed in. Our own modal has no such limit.
+  openModal(`
+    <h2>Alert</h2>
+    <p>Are you sure you want to log out?</p>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" id="logoutCancelBtn">Cancel</button>
+      <button class="btn btn-primary" id="logoutConfirmBtn">OK</button>
+    </div>
+  `);
+  $('#logoutCancelBtn').onclick = closeModal;
+  $('#logoutConfirmBtn').onclick = ()=>{
+    closeModal();
+    // Clear the session flag the beforeunload guard checks BEFORE reloading -
+    // the person already confirmed intent to leave via the modal above, so the
+    // browser's own "Reload site? Changes may not be saved" prompt on top of
+    // that would just be a redundant second confirmation for the same action.
+    state.uid = null;
+    // Clear anything sensitive out of the DOM immediately, then force a full page
+    // reload rather than an in-page state reset. A real reload guarantees no
+    // leftover JS state or DOM content survives (e.g. via the browser's back-forward
+    // cache showing a frozen snapshot of the logged-in page after pressing Back),
+    // and it re-runs the whole login flow fresh next time.
+    ['membersTableBody','adminsTableBody','expensesTableBody','groupsTableBody'].forEach(id=>{
+      const el = document.getElementById(id);
+      if(el) el.innerHTML = '';
+    });
+    showOnly('loadingScreen');
+    auth.signOut().finally(()=>{ window.location.reload(); });
+  };
 });
 
 // If the browser restores this page from its back-forward cache (e.g. after
