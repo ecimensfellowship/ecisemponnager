@@ -166,6 +166,27 @@ body{
   border-color:transparent transparent transparent var(--color-primary-dark);
 }
 .ribbon-toggle:hover{filter:brightness(1.05);}
+
+/* Accordion pattern - a clickable header row (the item itself, e.g. a year or
+   an event name) that expands/collapses its own content, with a rotating
+   chevron indicating state - used for Payment Details and Event Collections. */
+.accordion-item{
+  border:1px solid var(--color-border);border-radius:8px;
+  margin-bottom:8px;overflow:hidden;background:var(--color-surface);
+}
+.accordion-header{
+  display:flex;justify-content:space-between;align-items:center;gap:8px;
+  padding:12px 14px;cursor:pointer;background:var(--color-bg);
+  font-weight:700;color:var(--color-primary-dark);font-size:0.9rem;
+  -webkit-tap-highlight-color:transparent;user-select:none;
+}
+.accordion-header:hover{filter:brightness(0.98);}
+.accordion-header .accordion-chevron{
+  transition:transform 0.2s ease;flex-shrink:0;color:var(--color-muted);
+}
+.accordion-header.open .accordion-chevron{transform:rotate(180deg);}
+.accordion-body{padding:10px 14px;}
+.accordion-body.hidden{display:none;}
 .icon-btn{background:none;border:none;font-size:1.3rem;cursor:pointer;color:var(--color-primary-dark);}
 
 /* ============ TOOLTIP ============ */
@@ -2565,8 +2586,22 @@ async function renderMyPaymentsGrid(){
   }
   paintGrid(Number(yearSel.value));
 
-  // Payment Details - grouped by year, same card treatment as the admin's
-  // Payments tab, so this reads consistently across the app.
+  // Small shared helper: wires a group of accordion headers/bodies, expanding
+  // only the first one by default and collapsing the rest.
+  function wireAccordions(containerSelector){
+    $all(containerSelector + ' .accordion-header').forEach((header, idx)=>{
+      const body = header.nextElementSibling;
+      const expanded = idx === 0;
+      body.classList.toggle('hidden', !expanded);
+      header.classList.toggle('open', expanded);
+      header.onclick = ()=>{
+        const nowHidden = body.classList.toggle('hidden');
+        header.classList.toggle('open', !nowHidden);
+      };
+    });
+  }
+
+  // Payment Details - accordion per year, most recent year open by default.
   const detailsByYear = {};
   payments.forEach(p=>{
     const year = (p.date||'').slice(0,4) || 'Unknown';
@@ -2575,10 +2610,9 @@ async function renderMyPaymentsGrid(){
   });
   const detailYears = Object.keys(detailsByYear).sort((a,b)=> b.localeCompare(a));
   let detailsHtml = payments.length ? '' : '<p class="muted small">No payments recorded yet.</p>';
-  detailYears.forEach((year, idx)=>{
+  detailYears.forEach(year=>{
     const entries = detailsByYear[year];
     const total = entries.reduce((sum,p)=> sum + (Number(p.amount)||0), 0);
-    const expanded = idx === 0;
     const cards = entries.map(p=> `
       <div class="subitem" style="flex-direction:column;align-items:stretch;gap:4px;">
         <div style="display:flex;justify-content:space-between;align-items:center;">
@@ -2592,26 +2626,19 @@ async function renderMyPaymentsGrid(){
         </div>
       </div>`).join('');
     detailsHtml += `
-      <div style="margin-bottom:10px;">
-        <div class="toolbar" style="margin-bottom:6px;">
-          <h3 class="muted" style="margin:0;font-size:0.9rem;">${year} <span class="tiny muted">(${entries.length}, ${fmtMoney(total)})</span></h3>
-          <button class="ribbon-toggle toggle-mypay-year" data-year="${year}">${expanded ? 'Hide' : 'Show'}</button>
+      <div class="accordion-item">
+        <div class="accordion-header">
+          <span>${year} <span class="tiny" style="font-weight:400;opacity:0.75;">(${entries.length}, ${fmtMoney(total)})</span></span>
+          <span class="accordion-chevron">▾</span>
         </div>
-        <div id="myPayDetailYear-${year}" class="${expanded ? '' : 'hidden'}">${cards}</div>
+        <div class="accordion-body">${cards}</div>
       </div>`;
   });
   $('#myPayDetails').innerHTML = detailsHtml;
-  $all('.toggle-mypay-year').forEach(btn=>{
-    btn.onclick = ()=>{
-      const body = document.getElementById('myPayDetailYear-' + btn.dataset.year);
-      const nowHidden = body.classList.toggle('hidden');
-      btn.textContent = nowHidden ? 'Show' : 'Hide';
-    };
-  });
+  wireAccordions('#myPayDetails');
 
-  // Event Collections - amounts paid toward named group events (e.g. a trip or
-  // festival fund), separate from regular subscription payments, grouped by
-  // event name. Only applies if this member belongs to a group.
+  // Event Collections - accordion per event (previously these were always
+  // shown with no way to collapse them at all).
   const eventWrap = $('#myEventCollections');
   if(!self.doc.groupId){
     eventWrap.innerHTML = '<p class="muted small">Not applicable - you are not assigned to a group.</p>';
@@ -2641,12 +2668,16 @@ async function renderMyPaymentsGrid(){
               <div class="muted tiny">${t.mode||''}</div>
             </div>`).join('');
           html += `
-            <div style="margin-bottom:10px;">
-              <h4 style="margin:0 0 6px;font-size:0.88rem;">${key} <span class="tiny muted">(${entries.length}, ${fmtMoney(total)})</span></h4>
-              ${cards}
+            <div class="accordion-item">
+              <div class="accordion-header">
+                <span>${key} <span class="tiny" style="font-weight:400;opacity:0.75;">(${entries.length}, ${fmtMoney(total)})</span></span>
+                <span class="accordion-chevron">▾</span>
+              </div>
+              <div class="accordion-body">${cards}</div>
             </div>`;
         });
         eventWrap.innerHTML = html;
+        wireAccordions('#myEventCollections');
       }
     }catch(err){
       eventWrap.innerHTML = `<p class="muted small">Could not load event collections (${err.message}).</p>`;
