@@ -3157,10 +3157,29 @@ async function runReport(type){
           total += Number(t.amount)||0;
           return `<tr><td>${idx+1}</td><td>${fmtDate(t.date)}</td><td>${t.memberName||''}</td><td>${fmtMoney(t.amount)}</td><td>${t.mode||''}</td></tr>`;
         }).join('');
-        const totalRowHtml = sortedEntries.length ? `<tr style="font-weight:700;"><td colspan="3">Total</td><td>${fmtMoney(total)}</td><td></td></tr>` : '';
+        const totalRowHtml = sortedEntries.length ? `<tr style="font-weight:700;"><td colspan="3">Total Collected</td><td>${fmtMoney(total)}</td><td></td></tr>` : '';
+
+        // Expenses tagged to this same event (via the Event dropdown on Add
+        // Expense), so the report shows both sides - what came in vs what was
+        // spent - not just collections. Sorted client-side rather than adding
+        // an orderBy, to avoid needing yet another composite index for this.
+        let expenseTotal = 0;
+        const expSnap = await expensesQuery().where('eventId','==',eventId).get();
+        const sortedExpenses = expSnap.docs.map(d=>d.data()).sort((a,b)=> new Date(b.date) - new Date(a.date));
+        const expenseRows = sortedExpenses.map((x,idx)=>{
+          expenseTotal += Number(x.amount)||0;
+          return `<tr><td>${idx+1}</td><td>${fmtDate(x.date)}</td><td>${x.description}</td><td>${fmtMoney(x.amount)}</td></tr>`;
+        }).join('');
+        const expenseTotalRowHtml = sortedExpenses.length ? `<tr style="font-weight:700;"><td colspan="3">Total Expenses</td><td>${fmtMoney(expenseTotal)}</td></tr>` : '';
+        const expenseSection = `<h3 style="margin-top:20px;">Expenses</h3>
+          <table><thead><tr><th>Sl.No</th><th>Date</th><th>Description</th><th>Amount</th></tr></thead><tbody>${expenseRows || '<tr><td colspan="4">No expenses recorded for this event</td></tr>'}${expenseTotalRowHtml}</tbody></table>`;
+
+        const net = total - expenseTotal;
         printReport(`Event Collection Report — ${ev ? ev.name : ''}`,
-          `${churchLine} — Total Collected: ${fmtMoney(total)}`,
-          `<table><thead><tr><th>Sl.No</th><th>Date</th><th>Member</th><th>Amount</th><th>Mode</th></tr></thead><tbody>${rows || '<tr><td colspan="5">No collections recorded yet</td></tr>'}${totalRowHtml}</tbody></table>`);
+          `${churchLine} — Collected: ${fmtMoney(total)} — Expenses: ${fmtMoney(expenseTotal)} — Net: ${fmtMoney(net)}`,
+          `<h3 style="margin-top:0;">Collections</h3>
+           <table><thead><tr><th>Sl.No</th><th>Date</th><th>Member</th><th>Amount</th><th>Mode</th></tr></thead><tbody>${rows || '<tr><td colspan="5">No collections recorded yet</td></tr>'}${totalRowHtml}</tbody></table>
+           ${expenseSection}`);
       }catch(err){
         toast('Could not generate report: ' + err.message, 'error');
       }
