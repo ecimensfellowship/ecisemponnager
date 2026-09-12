@@ -1078,20 +1078,29 @@ function closeModal(){ $('#modalRoot').innerHTML = ''; }
 // Replacement for the browser's native confirm() - that dialog always shows
 // the page's domain in its title ("ecimensfellowship.github.io says"), which
 // a webpage has no ability to change (a deliberate browser security measure,
-// not something fixable in code). This uses our own modal instead, so the
-// title can say whatever we want.
-function customConfirm(message, title){
+// not something fixable in code). Appended directly to document.body with a
+// higher z-index than a regular modal - not through openModal()/#modalRoot -
+// specifically so it can stack safely ON TOP of an already-open modal (e.g.
+// confirming a delete from inside a member's detail popup) without wiping
+// that popup out underneath it.
+function customConfirm(title, message){
   return new Promise((resolve)=>{
-    openModal(`
-      <h2>${title || 'Alert'}</h2>
-      <p>${message}</p>
-      <div class="modal-actions">
-        <button type="button" class="btn btn-ghost" id="ccCancel">Cancel</button>
-        <button type="button" class="btn btn-primary" id="ccOk">OK</button>
-      </div>
-    `);
-    $('#ccCancel').onclick = ()=>{ closeModal(); resolve(false); };
-    $('#ccOk').onclick = ()=>{ closeModal(); resolve(true); };
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.style.zIndex = '300';
+    overlay.innerHTML = `
+      <div class="modal-box" style="max-width:380px;">
+        <h2>${title}</h2>
+        <p>${message}</p>
+        <div class="modal-actions">
+          <button class="btn btn-ghost" id="ccCancelBtn">Cancel</button>
+          <button class="btn btn-primary" id="ccOkBtn">OK</button>
+        </div>
+      </div>`;
+    document.body.appendChild(overlay);
+    const cleanup = (result)=>{ overlay.remove(); resolve(result); };
+    overlay.querySelector('#ccCancelBtn').onclick = ()=> cleanup(false);
+    overlay.querySelector('#ccOkBtn').onclick = ()=> cleanup(true);
   });
 }
 
@@ -1951,7 +1960,7 @@ function showCredentialSlip(name, userId, password){
 async function createLoginForMember(oldMemberId){
   const m = state.membersCache.find(x=>x.id===oldMemberId);
   if(!m){ toast('Member not found.', 'error'); return; }
-  if(!confirm(`Create login access for ${m.name}? Their User ID and password will be generated from their mobile number.`)) return;
+  if(!(await customConfirm('Alert', `Create login access for ${m.name}? Their User ID and password will be generated from their mobile number.`))) return;
 
   const mobile = m.mobile || '';
   const last5 = mobile.slice(-5);
@@ -2163,7 +2172,7 @@ async function loadFamilyTab(memberId){
   });
   $all('.delFamily').forEach(btn=>{
     btn.onclick = async ()=>{
-      if(!confirm('Remove this family member? This cannot be undone.')) return;
+      if(!(await customConfirm('Alert', 'Remove this family member? This cannot be undone.'))) return;
       try{
         await db.collection('members').doc(memberId).collection('family').doc(btn.dataset.id).delete();
         toast('Family member removed', 'success');
@@ -2379,7 +2388,7 @@ async function loadPaymentsTab(memberId){
 
   $all('.delPayment').forEach(btn=>{
     btn.onclick = async ()=>{
-      if(!confirm('Delete this payment record? This cannot be undone.')) return;
+      if(!(await customConfirm('Alert', 'Delete this payment record? This cannot be undone.'))) return;
       try{
         await db.collection('members').doc(memberId).collection('payments').doc(btn.dataset.id).delete();
         toast('Payment deleted', 'success');
@@ -2524,7 +2533,7 @@ async function loadAuctionTab(memberId){
 
   $all('.delAuctionTx').forEach(btn=>{
     btn.onclick = async ()=>{
-      if(!confirm('Delete this repayment record? This cannot be undone.')) return;
+      if(!(await customConfirm('Alert', 'Delete this repayment record? This cannot be undone.'))) return;
       try{
         await db.collection('members').doc(memberId).collection('auctionTransactions').doc(btn.dataset.id).delete();
         await recalcAuctionBalance(memberId);
@@ -2954,7 +2963,7 @@ async function renderExpensesTable(){
     tr.innerHTML = `<td>${fmtDate(x.date)}</td><td>${x.description}</td><td>${x.groupName || '<span class="muted">General</span>'}</td><td>${x.eventName || '<span class="muted">-</span>'}</td><td>${fmtMoney(x.amount)}</td>
       <td class="row-actions"><button data-act="del">Delete</button></td>`;
     tr.querySelector('[data-act="del"]').onclick = async ()=>{
-      if(!confirm('Delete this expense record? This cannot be undone.')) return;
+      if(!(await customConfirm('Alert', 'Delete this expense record? This cannot be undone.'))) return;
       await db.collection('expenses').doc(doc.id).delete();
       toast('Expense deleted', 'success');
       await renderExpensesTable();
@@ -3348,7 +3357,7 @@ function populateSettingsForm(){
     div.className = 'subitem';
     div.innerHTML = `<span>${ev.title} — ${fmtDate(ev.date)}</span><button data-i="${i}">Remove</button>`;
     div.querySelector('button').onclick = async ()=>{
-      if(!confirm(`Remove the event "${ev.title}"?`)) return;
+      if(!(await customConfirm('Alert', `Remove the event "${ev.title}"?`))) return;
       const events = s.events.slice(); events.splice(i,1);
       await db.collection('settings').doc('public').update({ events });
       state.settings.events = events;
@@ -3385,7 +3394,7 @@ async function renderGroupsTable(){
         toast(`Can't delete "${g.name}" - ${countSnap.size} member(s) are still assigned to it. Reassign them first.`, 'error');
         return;
       }
-      if(!confirm(`Delete the group "${g.name}"?`)) return;
+      if(!(await customConfirm('Alert', `Delete the group "${g.name}"?`))) return;
       try{
         await db.collection('groups').doc(g.id).delete();
         toast('Group deleted', 'success');
@@ -3644,7 +3653,7 @@ async function loadInitialEntryForGroup(groupId){
   function wireDeleteButtons(){
     $all('.delInitialEntry').forEach(btn=>{
       btn.onclick = async ()=>{
-        if(!confirm('Delete this entry? This cannot be undone.')) return;
+        if(!(await customConfirm('Alert', 'Delete this entry? This cannot be undone.'))) return;
         try{
           await db.collection('groups').doc(groupId).collection('initialEntries').doc(btn.dataset.id).delete();
           toast('Entry deleted', 'success');
@@ -3722,7 +3731,7 @@ async function loadInitialEntryForGroup(groupId){
     $('#emClose').onclick = closeModal;
     $all('.delEvent').forEach(btn=>{
       btn.onclick = async ()=>{
-        if(!confirm('Remove this event? Past collections recorded against it are kept, just no longer selectable for new ones.')) return;
+        if(!(await customConfirm('Alert', 'Remove this event? Past collections recorded against it are kept, just no longer selectable for new ones.'))) return;
         try{
           await db.collection('groups').doc(groupId).collection('events').doc(btn.dataset.id).delete();
           toast('Event removed', 'success');
@@ -3942,7 +3951,7 @@ async function renderAdminsTable(){
     if(a.role!=='primary'){
       tr.querySelector('[data-act="editgroup"]').onclick = ()=> openEditAdminGroupForm(a);
       tr.querySelector('[data-act="del"]').onclick = async ()=>{
-        if(!confirm(`Revoke admin access for ${a.name}? This cannot be undone from here.`)) return;
+        if(!(await customConfirm('Alert', `Revoke admin access for ${a.name}? This cannot be undone from here.`))) return;
         // Note: this removes the Firestore profile (revoking app access) but cannot delete
         // the underlying Firebase Auth account from client-side code - that needs the
         // Admin SDK (a Cloud Function), which is a further step beyond this file.
