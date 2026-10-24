@@ -1733,13 +1733,14 @@ function wireMemberModule(){
 }
 
 /* =========================================================
-   SEND MESSAGE (WhatsApp) - primary admin, Members screen
+   SEND MESSAGE (WhatsApp / SMS) - primary admin, Members screen
    Gathers this week's birthdays (Mon-Sun) and any special event on the
    coming Sunday, shows them in a popup, then lets the admin build a
-   WhatsApp message for all members or one group. WhatsApp itself doesn't
-   allow a website to send messages silently/in bulk (that needs the paid
-   WhatsApp Business API plus a server), so each member gets a "Send"
-   button that opens WhatsApp with the message already typed in.
+   message for all members or one group and send it via WhatsApp or SMS.
+   Neither channel allows a website to send silently/in bulk (that needs a
+   paid gateway plus a server), so both hand the ready-made message to the
+   phone: WhatsApp opens a chat (wa.me link), SMS opens the phone's own
+   messaging app (sms: link). The admin presses send there.
    ========================================================= */
 
 function smEsc(s){
@@ -1748,13 +1749,41 @@ function smEsc(s){
 function smYmd(d){
   return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
 }
-// wa.me needs the full international number with no + or leading zeros.
-// Stored mobiles are plain 10-digit Indian numbers, so take the last 10
-// digits and prefix 91.
+// Full international number with no + or leading zeros. Stored mobiles are
+// plain 10-digit Indian numbers, so take the last 10 digits and prefix 91.
 function smWaNumber(mobile){
   const digits = String(mobile||'').replace(/\D/g,'');
   if(digits.length < 10) return null;
   return '91' + digits.slice(-10);
+}
+function smIsMobileDevice(){ return /Android|iPhone|iPad|iPod/i.test(navigator.userAgent); }
+function smIsIOS(){
+  return /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+}
+// sms: links take one or more comma-separated numbers; Android puts the text
+// after "?body=", iOS after "&body=".
+function smSmsLink(numbers, text){
+  return 'sms:' + numbers.map(n=>'+'+n).join(',') + (smIsIOS() ? '&' : '?') + 'body=' + encodeURIComponent(text);
+}
+// WhatsApp links open in a new tab; sms: links are handed to the phone's
+// messaging app via a temporary link click (window.open would leave a blank tab).
+function smOpenLink(link, isSms){
+  if(isSms){
+    const a = document.createElement('a');
+    a.href = link; a.style.display = 'none';
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  }else{
+    window.open(link, '_blank', 'noopener');
+  }
+}
+// Rough SMS cost estimate: plain text fits 160 characters per SMS, but any
+// Tamil letter or emoji switches the whole message to 70 characters per SMS.
+function smSegmentInfo(text){
+  const sample = String(text).replace(/\{name\}/g, 'Member');
+  const unicode = /[^\x00-\x7F]/.test(sample);
+  const len = sample.length;
+  const single = unicode ? 70 : 160, multi = unicode ? 67 : 153;
+  return { len, unicode, segments: len <= single ? 1 : Math.ceil(len / multi) };
 }
 
 function collectWeeklyInfo(members){
@@ -1784,6 +1813,7 @@ function collectWeeklyInfo(members){
   return { monday, sunday, birthdays, events };
 }
 
+// WhatsApp version: emojis and one line per item.
 function buildDefaultMessage(info){
   const s = state.settings || {};
   const lines = [];
@@ -1804,6 +1834,22 @@ function buildDefaultMessage(info){
   lines.push('');
   lines.push('God bless you! 🙏');
   return lines.join('\n');
+}
+
+// SMS version: plain, compact text with no emojis and no Tamil, so it stays
+// within the 160-character SMS size and costs fewer messages per member.
+function buildDefaultSmsMessage(info){
+  const s = state.settings || {};
+  const parts = ['Dear {name}, greetings from ' + (s.nameEn || 'church') + '.'];
+  if(info.events.length){
+    parts.push('Special event this Sunday (' + fmtDate(info.sunday) + '): ' + info.events.map(e=>e.title).join(', ') + '.');
+  }
+  if(info.birthdays.length){
+    parts.push('Birthdays this week: ' + info.birthdays.map(b=>
+      b.name + ' (' + b.date.toLocaleDateString('en-IN', {weekday:'short', day:'2-digit', month:'short'}) + ')').join(', ') + '.');
+  }
+  parts.push('God bless you.');
+  return parts.join('\n');
 }
 
 async function openSendMessageModal(){
@@ -1844,7 +1890,14 @@ async function openSendMessageModal(){
     ${eventHtml}
 
     <div class="form-grid" style="margin-top:16px;">
-      <div class="full">
+      <div>
+        <label>Send via</label>
+        <select id="smChannel">
+          <option value="whatsapp">WhatsApp</option>
+          <option value="sms">SMS (phone's messaging app)</option>
+        </select>
+      </div>
+      <div>
         <label>Send to</label>
         <select id="smAudience">
           <option value="all">All Members</option>
@@ -1853,7 +1906,8 @@ async function openSendMessageModal(){
       </div>
       <div class="full">
         <label>Message <span class="tooltip" data-tip="{name} is replaced with each member's own name. You can edit the text freely before sending.">?</span></label>
-        <textarea id="smMessage" rows="9" style="width:100%;padding:8px 10px;border:1px solid var(--color-border);border-radius:6px;font-family:inherit;">${smEsc(buildDefaultMessage(info))}</textarea>
+        <textarea id="smMessage" rows="9" style="width:100%;padding:8px 10px;border:1px solid var(--color-border);border-radius:6px;font-family:inherit;"></textarea>
+        <p id="smSegInfo" class="muted tiny" style="margin-top:4px;"></p>
       </div>
     </div>
     <div class="modal-actions">
@@ -1863,8 +1917,34 @@ async function openSendMessageModal(){
     <div id="smRecipients" style="margin-top:14px;"></div>
   `);
 
+  // Each channel has its own default text (the SMS one is plain and short).
+  // Switching channel swaps the text only if the admin hasn't edited it.
+  const defaults = { whatsapp: buildDefaultMessage(info), sms: buildDefaultSmsMessage(info) };
+  let lastChannel = 'whatsapp';
+  $('#smMessage').value = defaults.whatsapp;
+
+  const updateSegInfo = ()=>{
+    const el = $('#smSegInfo');
+    if($('#smChannel').value !== 'sms'){ el.textContent = ''; return; }
+    const seg = smSegmentInfo($('#smMessage').value);
+    el.textContent = seg.len + ' characters, about ' + seg.segments + ' SMS per member' +
+      (seg.unicode ? ' (Tamil letters or emojis make each SMS only 70 characters, so it can cost more)' : '') + '.' +
+      (smIsMobileDevice() ? '' : ' You are on a computer - SMS buttons only work on a phone.');
+  };
+  $('#smMessage').oninput = updateSegInfo;
+  $('#smChannel').onchange = ()=>{
+    const ch = $('#smChannel').value;
+    const ta = $('#smMessage');
+    if(ta.value === defaults[lastChannel]) ta.value = defaults[ch];
+    lastChannel = ch;
+    updateSegInfo();
+    $('#smRecipients').innerHTML = ''; // a list built for the other channel would be stale
+  };
+  updateSegInfo();
+
   $('#smClose').onclick = closeModal;
   $('#smPrepare').onclick = ()=>{
+    const isSms = $('#smChannel').value === 'sms';
     const audience = $('#smAudience').value;
     const template = $('#smMessage').value;
     const target = members
@@ -1877,7 +1957,8 @@ async function openSendMessageModal(){
       const num = smWaNumber(m.mobile);
       if(!num){ skipped++; return; }
       const text = template.replace(/\{name\}/g, m.name || '');
-      rows.push({ m, link: 'https://wa.me/' + num + '?text=' + encodeURIComponent(text) });
+      const link = isSms ? smSmsLink([num], text) : 'https://wa.me/' + num + '?text=' + encodeURIComponent(text);
+      rows.push({ m, num, link });
     });
 
     const wrap = $('#smRecipients');
@@ -1885,18 +1966,114 @@ async function openSendMessageModal(){
       wrap.innerHTML = '<p class="muted small">No members with a valid mobile number in this selection.</p>';
       return;
     }
+
+    const BATCH = 10;                  // numbers per group SMS
+    const sent = new Set();            // row indexes already opened in this round
+
+    const intro = isSms
+      ? `Tick the members you want. <b>Send to Selected</b> opens your phone's messaging app for one member at a time with the message ready (personalised with each name) - press send there, come back, and press the button again for the next member.
+         <b>Group SMS</b> puts up to ${BATCH} selected numbers (skipping anyone already opened) into ONE message at a time, which is quicker, but on most phones everyone in that message can see each other's numbers and replies go to all of them (the {name} becomes "Member"). Normal SMS charges from your SIM plan apply.`
+      : `Tick the members you want, then press the button: it opens WhatsApp for one member at a time with the message already typed in. Send it there, come back, and press the button again for the next member. (WhatsApp and browsers don't allow opening everyone at once.)`;
+
     wrap.innerHTML = `
-      <p class="muted small" style="margin-bottom:8px;">${rows.length} member${rows.length===1?'':'s'} ready${skipped?` (${skipped} skipped - no valid mobile number)`:''}.
-      WhatsApp can't send to many people automatically, so tap <b>Send</b> next to each name - WhatsApp opens with the message already typed in, and you just press send there.</p>
+      <p class="muted small" style="margin-bottom:8px;">${rows.length} member${rows.length===1?'':'s'} ready${skipped?` (${skipped} skipped - no valid mobile number)`:''}. ${intro}</p>
+      <div style="position:sticky;top:0;z-index:2;background:var(--color-surface);padding:8px 0;border-bottom:1px solid var(--color-border);margin-bottom:8px;display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between;">
+        <label style="display:flex;align-items:center;gap:8px;font-weight:600;margin:0;cursor:pointer;">
+          <input type="checkbox" id="smSelectAll" checked style="width:auto;"> Select All
+          <span class="muted tiny" id="smSelCount"></span>
+        </label>
+        <div style="display:flex;flex-wrap:wrap;gap:8px;">
+          <button type="button" class="btn btn-primary" id="smSendSelected">Send to Selected</button>
+          ${isSms ? `<button type="button" class="btn btn-secondary" id="smGroupSms">Group SMS</button>
+          <button type="button" class="btn btn-ghost" id="smCopyNumbers">Copy numbers</button>` : ''}
+        </div>
+      </div>
       ${rows.map((r,i)=>`
-        <div class="subitem">
-          <span>${i+1}. ${smEsc(r.m.name)} <span class="muted tiny">${smEsc(r.m.mobile)}</span></span>
-          <a class="btn btn-secondary sm-send" href="${r.link}" target="_blank" rel="noopener"
-             style="padding:6px 14px;text-decoration:none;display:inline-block;">Send</a>
+        <div class="subitem" id="smRow-${i}">
+          <label style="display:flex;align-items:center;gap:8px;margin:0;flex:1;cursor:pointer;">
+            <input type="checkbox" class="sm-check" data-i="${i}" checked style="width:auto;flex-shrink:0;">
+            <span>${i+1}. ${smEsc(r.m.name)} <span class="muted tiny">${smEsc(r.m.mobile)}</span></span>
+          </label>
+          <a class="btn btn-secondary sm-send" data-i="${i}" href="${smEsc(r.link)}" ${isSms ? '' : 'target="_blank" rel="noopener"'}
+             style="padding:6px 14px;text-decoration:none;display:inline-block;">${isSms ? 'SMS' : 'Send'}</a>
         </div>`).join('')}`;
+
+    const checks = ()=> Array.from(wrap.querySelectorAll('.sm-check'));
+    const selectedIdx = ()=> checks().filter(b=>b.checked).map(b=>Number(b.dataset.i));
+    const markSent = (i)=>{
+      sent.add(i);
+      const a = wrap.querySelector('.sm-send[data-i="' + i + '"]');
+      if(a){ a.textContent = 'Opened ✓'; a.style.opacity = '0.65'; }
+    };
+    // Selected members not yet opened - both the one-by-one button and Group
+    // SMS work from this list, so nobody gets messaged twice by accident.
+    const pendingIdx = ()=> selectedIdx().filter(i=>!sent.has(i));
+    const setBtn = (btn, disabled, label)=>{
+      btn.disabled = disabled; btn.textContent = label; btn.style.opacity = disabled ? '0.55' : '1';
+    };
+    const refresh = ()=>{
+      const boxes = checks();
+      const selected = selectedIdx();
+      const pending = pendingIdx();
+      const doneCount = selected.length - pending.length;
+      const all = $('#smSelectAll');
+      all.checked = selected.length === boxes.length;
+      all.indeterminate = selected.length > 0 && selected.length < boxes.length;
+      $('#smSelCount').textContent = '(' + selected.length + ' selected)';
+
+      const btn = $('#smSendSelected');
+      if(!selected.length) setBtn(btn, true, 'Send to Selected');
+      else if(!pending.length) setBtn(btn, true, 'All selected opened ✓');
+      else if(!doneCount) setBtn(btn, false, 'Send to Selected (' + selected.length + ')');
+      else setBtn(btn, false, 'Send Next: ' + rows[pending[0]].m.name + ' (' + (doneCount+1) + ' of ' + selected.length + ')');
+
+      if(isSms){
+        const gbtn = $('#smGroupSms');
+        if(!selected.length) setBtn(gbtn, true, 'Group SMS');
+        else if(!pending.length) setBtn(gbtn, true, 'All selected opened ✓');
+        else{
+          const next = Math.min(BATCH, pending.length), left = Math.ceil(pending.length / BATCH);
+          setBtn(gbtn, false, 'Group SMS: ' + next + ' number' + (next===1?'':'s') + ' (' + left + ' batch' + (left===1?'':'es') + ' left)');
+        }
+      }
+    };
+
+    $('#smSelectAll').onchange = (e)=>{ checks().forEach(b=> b.checked = e.target.checked); refresh(); };
+    checks().forEach(b=>{ b.onchange = refresh; });
+
+    $('#smSendSelected').onclick = ()=>{
+      const pending = selectedIdx().filter(i=>!sent.has(i));
+      if(!pending.length) return;
+      const i = pending[0];
+      smOpenLink(rows[i].link, isSms);
+      markSent(i);
+      refresh();
+    };
     wrap.querySelectorAll('.sm-send').forEach(a=>{
-      a.addEventListener('click', ()=>{ a.textContent = 'Opened ✓'; a.style.opacity = '0.65'; });
+      a.addEventListener('click', ()=>{ markSent(Number(a.dataset.i)); refresh(); });
     });
+
+    if(isSms){
+      // One shared message for a batch of numbers - can't be personalised.
+      const groupText = template.replace(/\{name\}/g, 'Member');
+      $('#smGroupSms').onclick = ()=>{
+        const batch = pendingIdx().slice(0, BATCH);
+        if(!batch.length) return;
+        smOpenLink(smSmsLink(batch.map(i=>rows[i].num), groupText), true);
+        batch.forEach(markSent);
+        refresh();
+      };
+      $('#smCopyNumbers').onclick = async ()=>{
+        const nums = selectedIdx().map(i=>'+' + rows[i].num).join(', ');
+        try{
+          await navigator.clipboard.writeText(nums);
+          toast('Numbers copied', 'success');
+        }catch(err){
+          toast('Could not copy automatically', 'error');
+        }
+      };
+    }
+    refresh();
   };
 }
 
