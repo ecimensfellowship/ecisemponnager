@@ -188,6 +188,27 @@ body{
 .accordion-header.open .accordion-chevron{transform:rotate(180deg);}
 .accordion-body{padding:10px 14px;}
 .accordion-body.hidden{display:none;}
+
+/* Year-wise Collected / Expenses / Balance table inside the Fund Summary widget */
+.fund-year-table{width:100%;border-collapse:collapse;font-size:0.78rem;}
+.fund-year-table th{text-align:right;font-weight:600;color:var(--color-muted);padding:4px 3px;border-bottom:1px solid var(--color-border);}
+.fund-year-table td{text-align:right;padding:5px 3px;border-bottom:1px solid var(--color-border);}
+.fund-year-table th:first-child,.fund-year-table td:first-child{text-align:left;}
+.fund-year-table tr:last-child td{border-bottom:none;}
+
+/* Pending Payments screen: the Print button stays pinned to the bottom of the screen */
+.pp-actionbar{position:sticky;bottom:0;z-index:5;display:flex;justify-content:flex-end;padding:12px 0;margin-top:12px;background:var(--color-bg);border-top:1px solid var(--color-border);}
+.pp-actionbar .btn{min-width:140px;}
+@media (max-width: 860px){ .pp-actionbar .btn{width:100%;} }
+
+/* Dashboard "Pending Payments" box: members who owe, with the months - scrolls when the list is long */
+.pending-box{max-height:300px;overflow-y:auto;-webkit-overflow-scrolling:touch;border:1px solid var(--color-border);border-radius:8px;padding:2px 12px;background:var(--color-surface);}
+.pending-item{padding:9px 0;border-bottom:1px solid var(--color-border);}
+.pending-item:last-child{border-bottom:none;}
+.pending-item-head{display:flex;justify-content:space-between;align-items:center;gap:8px;font-weight:600;font-size:0.88rem;}
+.pending-count{background:rgba(192,57,43,0.12);color:var(--color-danger);border-radius:999px;padding:1px 10px;font-size:0.74rem;font-weight:700;white-space:nowrap;}
+.pending-months{margin-top:4px;font-size:0.76rem;color:var(--color-muted);line-height:1.55;}
+.pending-months b{color:var(--color-text);font-weight:600;}
 .icon-btn{background:none;border:none;font-size:1.3rem;cursor:pointer;color:var(--color-primary-dark);}
 
 /* ============ TOOLTIP ============ */
@@ -586,6 +607,7 @@ button:focus-visible, input:focus-visible, a:focus-visible{
       <button class="nav-link admin-only" data-view="members">👥 <span>Members</span></button>
       <button class="nav-link admin-only" data-view="expenses">💸 <span>Expenses</span></button>
       <button class="nav-link group-admin-only" data-view="initialentry">🏦 <span>Initial Entry</span></button>
+      <button class="nav-link group-admin-only" data-view="pendingpayments">⏳ <span>Pending Payments</span></button>
       <button class="nav-link" data-view="reports">📄 <span>Reports</span></button>
       <button class="nav-link admin-only" data-view="settings">⚙️ <span>Settings</span></button>
       <button class="nav-link primary-admin-only" data-view="groupmgmt">🗂️ <span>Admin Groups</span></button>
@@ -637,11 +659,11 @@ button:focus-visible, input:focus-visible, a:focus-visible{
 
           <div class="widget card member-only hidden" id="myGroupFundWidget">
             <div class="widget-head">
-              <h3>Group Fund Summary</h3>
+              <h3>Group Fund Summary <span class="tiny muted" id="mgfYearLabel"></span></h3>
             </div>
             <div class="widget-body">
               <div class="stat-row">Group: <b id="mgfGroupName">-</b></div>
-              <div class="stat-row">Opening Balance: <b id="mgfOpening">₹0</b></div>
+              <div class="stat-row hidden" id="mgfOpeningRow">Opening Balance: <b id="mgfOpening">₹0</b></div>
               <div class="stat-row">Event Collections: <b id="mgfEvents">₹0</b></div>
               <div class="stat-row">Subscription Payments: <b id="mgfSubscriptions">₹0</b></div>
               <div class="stat-row">Expenses: <b id="mgfExpenses">₹0</b></div>
@@ -673,13 +695,26 @@ button:focus-visible, input:focus-visible, a:focus-visible{
 
           <div class="widget card group-admin-only">
             <div class="widget-head">
-              <h3>Fund Summary</h3>
+              <h3>Fund Summary <span class="tiny muted" id="fundYearLabel"></span></h3>
               <button class="ribbon-toggle toggle-widget" data-target="fundBody">Hide</button>
             </div>
             <div id="fundBody" class="widget-body">
               <div class="stat-row">Collected: <b id="statCollected">₹0</b></div>
+              <div class="muted tiny" id="fundBroughtNote" style="margin:-2px 0 4px;"></div>
               <div class="stat-row">Expenses: <b id="statExpenses">₹0</b></div>
               <div class="stat-row stat-highlight">In Hand: <b id="statInHand">₹0</b></div>
+              <div id="fundByYear"></div>
+            </div>
+          </div>
+
+          <div class="widget card group-admin-only">
+            <div class="widget-head">
+              <h3>Pending Payments <span class="tiny muted" id="pendBoxCount"></span></h3>
+              <button class="ribbon-toggle toggle-widget" data-target="pendBody">Hide</button>
+            </div>
+            <div id="pendBody" class="widget-body">
+              <p class="muted tiny" id="pendBoxNote" style="margin-bottom:8px;"></p>
+              <div id="pendBox" class="pending-box"><p class="muted small">Loading...</p></div>
             </div>
           </div>
 
@@ -744,6 +779,28 @@ button:focus-visible, input:focus-visible, a:focus-visible{
             <thead><tr><th>Date</th><th>Description</th><th>Group</th><th>Event</th><th>Amount</th><th></th></tr></thead>
             <tbody id="expensesTableBody"></tbody>
           </table>
+        </div>
+      </section>
+
+      <!-- PENDING PAYMENTS (group admin): own group's members + months with no confirmed payment, with a Print button -->
+      <section id="view-pendingpayments" class="view hidden">
+        <div class="toolbar">
+          <h3 class="muted" id="ppHeading">Pending Payments</h3>
+          <select id="ppSort" style="padding:8px 12px;border:1px solid var(--color-border);border-radius:6px;">
+            <option value="name">Sort: Name</option>
+            <option value="status">Sort: Status</option>
+            <option value="pending">Sort: Most pending first</option>
+          </select>
+        </div>
+        <p class="muted small" id="ppNote" style="margin-bottom:10px;"></p>
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead><tr><th>Sl.No</th><th>Name</th><th>Mobile</th><th>Status</th><th>Pending</th></tr></thead>
+            <tbody id="ppBody"><tr><td colspan="5" class="muted">Loading...</td></tr></tbody>
+          </table>
+        </div>
+        <div class="pp-actionbar">
+          <button type="button" class="btn btn-primary" id="ppPrintBtn">Print</button>
         </div>
       </section>
 
@@ -1508,7 +1565,7 @@ function wireNav(){
 const VIEW_TITLES = {
   dashboard:'Dashboard', members:'Members', expenses:'Expenses',
   reports:'Reports', settings:'Settings', adminmgmt:'Admin Accounts', groupmgmt:'Admin Groups',
-  mypayments:'My Payments', myfamily:'My Family', initialentry:'Initial Entry'
+  mypayments:'My Payments', myfamily:'My Family', initialentry:'Initial Entry', pendingpayments:'Pending Payments'
 };
 
 // Views only an admin (primary or secondary) should ever be able to render.
@@ -1516,7 +1573,7 @@ const VIEW_TITLES = {
 // button was correctly hidden - so a stale cached page, leftover view state,
 // or any other unexpected path can never actually show admin-only data to
 // a member.
-const ADMIN_ONLY_VIEWS = ['members','expenses','settings','adminmgmt','groupmgmt','initialentry'];
+const ADMIN_ONLY_VIEWS = ['members','expenses','settings','adminmgmt','groupmgmt','initialentry','pendingpayments'];
 
 async function switchView(view){
   const isAdminRole = state.role==='primary' || state.role==='secondary';
@@ -1539,6 +1596,7 @@ async function switchView(view){
   if(view==='mypayments') await renderMyPaymentsGrid();
   if(view==='myfamily') await renderMyFamilyTree();
   if(view==='initialentry') await renderInitialEntryView();
+  if(view==='pendingpayments') await renderPendingPayments();
 }
 
 /* =========================================================
@@ -1609,14 +1667,16 @@ async function renderDashboard(){
     if(self.doc.groupId){
       try{
         const fs = await computeGroupFundSummary(self.doc.groupId, self.doc.groupName);
+        $('#mgfYearLabel').textContent = '(' + fs.year + ')';
         $('#mgfGroupName').textContent = fs.groupName;
         $('#mgfOpening').textContent = fmtMoney(fs.openingBalance);
+        $('#mgfOpeningRow').classList.toggle('hidden', !fs.openingBalance); // only when an opening balance was entered this year
         $('#mgfEvents').textContent = fmtMoney(fs.eventTotal);
         $('#mgfSubscriptions').textContent = fmtMoney(fs.subscriptionTotal);
         $('#mgfExpenses').textContent = fmtMoney(fs.groupExpenses);
         $('#mgfBalance').textContent = fmtMoney(fs.balanceInHand);
-        $('#mgfFootnote').textContent = fs.openingBalanceDate
-          ? `Opening balance as of ${fmtDate(fs.openingBalanceDate)}, entered by ${fs.openingBalanceBy}` : '';
+        $('#mgfFootnote').textContent = 'Shows ' + fs.year + " only - last year's closing balance is carried forward." +
+          (fs.openingBalanceDate ? ' Opening balance as of ' + fmtDate(fs.openingBalanceDate) + ', entered by ' + fs.openingBalanceBy + '.' : '');
         show($('#myGroupFundWidget'));
       }catch(err){
         console.warn('Could not load group fund summary:', err.message);
@@ -1657,42 +1717,124 @@ async function renderDashboard(){
     $('#statPaid').textContent = paid;
     $('#statUnpaid').textContent = unpaid;
 
-    // Fund summary
-    let collected = 0;
+    // Fund summary: the top rows show the CURRENT year only, with last year's
+    // closing balance carried in; the table below shows every year.
+    const byYear = {};
+    const pendingByMember = []; // feeds the Pending Payments box from this same lookup - no extra reads
+    const nowForPending = new Date();
     for(const m of members){
       const paySnap = await db.collection('members').doc(m.id).collection('payments')
         .where('confirmed','==',true).get();
-      paySnap.forEach(p=> collected += Number(p.data().amount)||0);
-    }
-
-    // Initial Entry amounts also count toward the fund total, scoped to just
-    // this admin's own group. Opening-balance entries are periodic snapshots
-    // (only the latest one counts), while event-collection entries are
-    // cumulative contributions (all of them add up) - summing both types
-    // flatly would double-count old opening-balance snapshots.
-    function sumInitialEntries(docs){
-      let openingBalance = 0, eventTotal = 0, foundOpening = false;
-      const sorted = docs.slice().sort((a,b)=> new Date(b.date) - new Date(a.date));
-      sorted.forEach(t=>{
-        if(t.type === 'event') eventTotal += Number(t.amount)||0;
-        else if(!foundOpening){ openingBalance = Number(t.amount)||0; foundOpening = true; }
+      const paidMonths = new Set();
+      paySnap.forEach(p=>{
+        const pd = p.data();
+        fundBucket(byYear, fundYearOf(pd.date)).collected += Number(pd.amount)||0;
+        if(pd.monthKey) paidMonths.add(pd.monthKey);
       });
-      return openingBalance + eventTotal;
+      pendingByMember.push({ name: m.name || '', keys: pendingMonthKeys(paidMonths, nowForPending) });
     }
+    renderPendingBox(pendingByMember);
+
+    // Initial Entry amounts also count as collections, scoped to just this
+    // admin's own group.
     try{
       const ieSnap = await db.collection('groups').doc(state.adminDoc.groupId).collection('initialEntries').get();
-      collected += sumInitialEntries(ieSnap.docs.map(d=>d.data()));
+      tallyInitialEntries(ieSnap.docs.map(d=>d.data()), byYear);
     }catch(err){
       console.warn('Could not include initial entries in fund summary:', err.message);
     }
 
     const expSnap = await expensesQuery().get();
-    let expenses = 0;
-    expSnap.forEach(e=> expenses += Number(e.data().amount)||0);
-    $('#statCollected').textContent = fmtMoney(collected);
-    $('#statExpenses').textContent = fmtMoney(expenses);
-    $('#statInHand').textContent = fmtMoney(collected - expenses);
+    expSnap.forEach(e=>{
+      const ed = e.data();
+      fundBucket(byYear, fundYearOf(ed.date)).expenses += Number(ed.amount)||0;
+    });
+
+    const thisYear = new Date().getFullYear();
+    const fundModel = buildFundYearRows(byYear, thisYear);
+    const cur = fundModel.rows.find(r=> r.year === String(thisYear));
+    $('#fundYearLabel').textContent = '(' + thisYear + ')';
+    $('#statCollected').textContent = fmtMoney(cur.collected);
+    $('#fundBroughtNote').textContent = cur.brought ? 'includes ' + fmtMoney(cur.brought) + ' brought forward from ' + (thisYear - 1) : '';
+    $('#statExpenses').textContent = fmtMoney(cur.expenses);
+    $('#statInHand').textContent = fmtMoney(cur.balance);
+    $('#fundByYear').innerHTML = renderFundByYear(fundModel);
   }
+}
+
+// ---- Year-wise split of the group Fund Summary ----
+// Every rupee in the headline Collected / Expenses totals is credited to the
+// year of its own date, so the yearly rows add up exactly to those totals.
+function fundYearOf(dateStr){
+  const y = String(dateStr||'').slice(0,4);
+  return /^\d{4}$/.test(y) ? y : 'Unknown';
+}
+function fundBucket(byYear, year){
+  return byYear[year] || (byYear[year] = { collected:0, expenses:0, opening:0 });
+}
+// Adds a group's Initial Entry records to the per-year buckets and returns their
+// total. Opening-balance entries are periodic snapshots - only the latest one
+// counts (credited to the year it was entered), while event-collection entries
+// are cumulative contributions, each credited to its own year. Summing both
+// types flatly would double-count old opening-balance snapshots.
+function tallyInitialEntries(docs, byYear){
+  let total = 0, foundOpening = false;
+  const sorted = docs.slice().sort((a,b)=> new Date(b.date) - new Date(a.date));
+  sorted.forEach(t=>{
+    const amt = Number(t.amount)||0;
+    if(t.type === 'event'){
+      total += amt;
+      fundBucket(byYear, fundYearOf(t.date)).collected += amt;
+    } else if(!foundOpening){
+      foundOpening = true;
+      total += amt;
+      const b = fundBucket(byYear, fundYearOf(t.date));
+      b.collected += amt; b.opening += amt;
+    }
+  });
+  return total;
+}
+// Turns the raw per-year buckets into year-wise rows where each year's
+// Collected includes the PREVIOUS year's closing balance carried forward, then
+// that year's own expenses are taken off to give its Balance - which in turn
+// carries into the next year. Every year from the first one on record up to the
+// current year gets a row (so a year with no activity still passes its balance
+// on), and the current year always exists even if nothing is recorded yet.
+// Records with no usable date can't belong to any year, so they stay separate.
+function buildFundYearRows(byYear, currentYear){
+  const numeric = Object.keys(byYear).filter(y=> /^\d{4}$/.test(y)).map(Number);
+  const first = Math.min(currentYear, ...numeric);
+  const last = Math.max(currentYear, ...numeric);
+  const rows = [];
+  let carry = 0;
+  for(let y=first; y<=last; y++){
+    const b = byYear[String(y)] || { collected:0, expenses:0, opening:0 };
+    const collected = carry + b.collected;
+    const balance = collected - b.expenses;
+    rows.push({ year:String(y), brought:carry, own:b.collected, collected, expenses:b.expenses, opening:b.opening, balance });
+    carry = balance;
+  }
+  return { rows, unknown: byYear['Unknown'] || null };
+}
+function renderFundByYear(model){
+  const rows = model.rows.slice().reverse(); // newest year first
+  if(!rows.length && !model.unknown) return '';
+  let openingNote = '';
+  let body = rows.map(r=>{
+    if(r.opening) openingNote += (openingNote ? ' ' : '') + '* ' + r.year + ' includes opening balance ' + fmtMoney(r.opening) + '.';
+    return '<tr><td>' + r.year + (r.opening ? '*' : '') + '</td><td>' + fmtMoney(r.collected) + '</td><td>' + fmtMoney(r.expenses) +
+      '</td><td' + (r.balance < 0 ? ' style="color:var(--color-danger);"' : '') + '>' + fmtMoney(r.balance) + '</td></tr>';
+  }).join('');
+  if(model.unknown){
+    const u = model.unknown, net = u.collected - u.expenses;
+    body += '<tr><td>No date</td><td>' + fmtMoney(u.collected) + '</td><td>' + fmtMoney(u.expenses) + '</td><td>' + fmtMoney(net) + '</td></tr>';
+  }
+  return '<div style="margin-top:12px;padding-top:10px;border-top:1px dashed var(--color-border);">' +
+    '<div style="font-weight:700;font-size:0.82rem;margin-bottom:6px;">Year-wise</div>' +
+    '<table class="fund-year-table"><thead><tr><th>Year</th><th>Collected</th><th>Expenses</th><th>Balance</th></tr></thead><tbody>' + body + '</tbody></table>' +
+    '<p class="muted tiny" style="margin-top:6px;">Each year\'s Collected includes the previous year\'s closing balance carried forward.' +
+    (model.unknown ? ' "No date" records are not part of any year\'s balance.' : '') + '</p>' +
+    (openingNote ? '<p class="muted tiny" style="margin-top:4px;">' + openingNote + '</p>' : '') + '</div>';
 }
 
 function renderBirthdaysWidget(members){
@@ -2075,6 +2217,139 @@ async function openSendMessageModal(){
     }
     refresh();
   };
+}
+
+/* =========================================================
+   PENDING PAYMENTS (group admin) - the admin's own group members with how
+   many months have no confirmed payment, plus a Print button (PDF through the
+   browser's print dialog, same as the other reports)
+   ========================================================= */
+
+// Same fixed starting point the Member Status Report uses, so the two agree.
+const PENDING_FROM = { year:2025, month:1 };
+const PP_STATUS_ORDER = { 'Active':0, 'Suspended':1, 'Inactive':2 };
+let ppRows = [];
+
+function ppEsc(s){
+  return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// The months (as "YYYY-MM", oldest first) from PENDING_FROM up to and including
+// the current month that have no confirmed payment on record.
+function pendingMonthKeys(paidMonths, now){
+  const total = (now.getFullYear() - PENDING_FROM.year) * 12 + (now.getMonth() + 1 - PENDING_FROM.month) + 1;
+  const keys = [];
+  for(let i=0; i<total; i++){
+    const y = PENDING_FROM.year + Math.floor((PENDING_FROM.month - 1 + i) / 12);
+    const mo = ((PENDING_FROM.month - 1 + i) % 12) + 1;
+    const key = y + '-' + String(mo).padStart(2,'0');
+    if(!paidMonths.has(key)) keys.push(key);
+  }
+  return keys;
+}
+function countPendingMonths(paidMonths, now){ return pendingMonthKeys(paidMonths, now).length; }
+
+// Group admin dashboard box: members who owe payments (most months owed first),
+// each with how many and which months (Jan, Feb...), grouped by year. The box
+// itself scrolls when the list is long. Members who are fully paid up are left out.
+function renderPendingBox(rows){
+  const now = new Date();
+  const owing = rows.filter(r=> r.keys.length)
+    .sort((a,b)=> (b.keys.length - a.keys.length) || (a.name||'').localeCompare(b.name||''));
+  $('#pendBoxCount').textContent = '(' + owing.length + ' of ' + rows.length + ' members)';
+  $('#pendBoxNote').textContent = 'Months with no confirmed payment, ' + MONTH_LABELS[PENDING_FROM.month - 1] + ' ' +
+    PENDING_FROM.year + ' to ' + MONTH_LABELS[now.getMonth()] + ' ' + now.getFullYear() + '.';
+  const box = $('#pendBox');
+  if(!rows.length){ box.innerHTML = '<p class="muted small" style="padding:8px 0;">No members in your group yet.</p>'; return; }
+  if(!owing.length){ box.innerHTML = '<p class="muted small" style="padding:8px 0;">Everyone is paid up 🎉</p>'; return; }
+  box.innerHTML = owing.map(r=>{
+    const byYear = {};
+    r.keys.forEach(k=>{ const parts = k.split('-'); (byYear[parts[0]] = byYear[parts[0]] || []).push(MONTH_LABELS[Number(parts[1]) - 1]); });
+    const lines = Object.keys(byYear).sort().map(y=> '<div><b>' + y + ':</b> ' + byYear[y].join(', ') + '</div>').join('');
+    return '<div class="pending-item"><div class="pending-item-head"><span>' + ppEsc(r.name) + '</span>' +
+      '<span class="pending-count">' + r.keys.length + ' pending</span></div><div class="pending-months">' + lines + '</div></div>';
+  }).join('');
+}
+
+function sortPendingRows(rows, mode){
+  const byName = (a,b)=> (a.name||'').localeCompare(b.name||'');
+  const list = rows.slice();
+  if(mode === 'status'){
+    list.sort((a,b)=> ((PP_STATUS_ORDER[a.status] ?? 99) - (PP_STATUS_ORDER[b.status] ?? 99)) || byName(a,b));
+  }else if(mode === 'pending'){
+    list.sort((a,b)=> ((b.pending ?? -1) - (a.pending ?? -1)) || byName(a,b)); // most pending first; unknown last
+  }else{
+    list.sort(byName);
+  }
+  return list;
+}
+
+function renderPendingTable(){
+  const body = $('#ppBody');
+  const rows = sortPendingRows(ppRows, $('#ppSort').value);
+  if(!rows.length){
+    body.innerHTML = '<tr><td colspan="5" class="muted">No members found.</td></tr>';
+    return;
+  }
+  let total = 0;
+  let html = rows.map((r,i)=>{
+    if(r.pending != null) total += r.pending;
+    return '<tr><td>' + (i+1) + '</td><td>' + ppEsc(r.name) + '</td><td>' + ppEsc(r.mobile) + '</td><td>' +
+      statusBadge(r.status) + '</td><td>' + (r.pending == null ? '-' : r.pending) + '</td></tr>';
+  }).join('');
+  html += '<tr style="font-weight:700;"><td colspan="4">Total pending payments</td><td>' + total + '</td></tr>';
+  body.innerHTML = html;
+}
+
+async function renderPendingPayments(){
+  const body = $('#ppBody');
+  body.innerHTML = '<tr><td colspan="5" class="muted">Loading...</td></tr>';
+  const groupName = (state.adminDoc && state.adminDoc.groupName) || '';
+  const now = new Date();
+  $('#ppHeading').textContent = groupName ? 'Pending Payments - ' + groupName : 'Pending Payments';
+  $('#ppNote').textContent = 'Pending = months with no confirmed payment, from ' + MONTH_LABELS[PENDING_FROM.month - 1] + ' ' +
+    PENDING_FROM.year + ' to ' + MONTH_LABELS[now.getMonth()] + ' ' + now.getFullYear() + '.';
+  $('#ppSort').onchange = renderPendingTable;
+  $('#ppPrintBtn').onclick = printPendingPayments;
+  try{
+    const snap = await membersQuery().get(); // already limited to this admin's group
+    const members = snap.docs.map(d=>({id:d.id, ...d.data()}));
+    ppRows = await Promise.all(members.map(async m=>{
+      let pending = null; // stays null (shown as "-") if this member's payments couldn't be read
+      try{
+        const paid = new Set();
+        const ps = await db.collection('members').doc(m.id).collection('payments').where('confirmed','==',true).get();
+        ps.forEach(p=>{ const mk = p.data().monthKey; if(mk) paid.add(mk); });
+        pending = countPendingMonths(paid, now);
+      }catch(err){ console.warn('Could not load payments for', m.name, err.message); }
+      return { name:m.name||'', mobile:m.mobile||'', status:m.status||'Active', pending };
+    }));
+    renderPendingTable();
+  }catch(err){
+    ppRows = [];
+    body.innerHTML = '<tr><td colspan="5" class="muted">Could not load members (' + ppEsc(err.message) + ').</td></tr>';
+    toast('Could not load pending payments: ' + err.message, 'error');
+  }
+}
+
+function printPendingPayments(){
+  if(!ppRows.length){ toast('Nothing to print yet.', 'error'); return; }
+  const s = state.settings || {};
+  const groupName = (state.adminDoc && state.adminDoc.groupName) || '';
+  const now = new Date();
+  let total = 0;
+  const rows = sortPendingRows(ppRows, $('#ppSort').value).map((r,i)=>{
+    if(r.pending != null) total += r.pending;
+    return '<tr><td>' + (i+1) + '</td><td>' + ppEsc(r.name) + '</td><td>' + ppEsc(r.mobile) + '</td><td>' +
+      ppEsc(r.status) + '</td><td>' + (r.pending == null ? '-' : r.pending) + '</td></tr>';
+  }).join('');
+  printReport(
+    'Pending Payments' + (groupName ? ' — ' + groupName : ''),
+    (s.nameEn || '') + (s.nameTa ? ' · ' + s.nameTa : '') + ' — ' + MONTH_LABELS[PENDING_FROM.month - 1] + ' ' + PENDING_FROM.year +
+      ' to ' + fmtDate(now) + ' — Generated ' + fmtDate(now),
+    '<table><thead><tr><th>Sl.No</th><th>Name</th><th>Mobile</th><th>Status</th><th>Pending Payments</th></tr></thead><tbody>' + rows +
+      '<tr style="font-weight:700;"><td colspan="4">Total</td><td>' + total + '</td></tr></tbody></table>'
+  );
 }
 
 async function renderMembersTable(){
@@ -3831,57 +4106,66 @@ async function renderInitialEntryView(){
   }
 }
 
-// Shared by the group admin's Initial Entry screen and the member-facing
-// "Group Fund Summary" dashboard widget, so both always agree on the math:
-// Opening Balance (latest snapshot) + Event Collections (all summed) +
-// Subscription Payments (all confirmed payments from the group's members) -
-// Expenses (tagged to this group) = Balance In Hand.
+// Powers the member-facing "Group Fund Summary" dashboard card. Mirrors the
+// group admin's Fund Summary: it shows the CURRENT year only, with last year's
+// closing balance carried in (via the same year-wise helpers the admin view
+// uses, so both always agree), then this year's collections added and this
+// year's expenses taken off.
 async function computeGroupFundSummary(groupId, fallbackGroupName){
   const group = state.groupsCache.find(g=>g.id===groupId);
   const groupName = group ? group.name : (fallbackGroupName || (state.adminDoc && state.adminDoc.groupName) || (state.linkedMemberDoc && state.linkedMemberDoc.groupName) || '');
+  const thisYear = new Date().getFullYear();
+  const yKey = String(thisYear);
+  const byYear = {};
 
   let entries = [];
   try{
     const snap = await db.collection('groups').doc(groupId).collection('initialEntries').orderBy('date','desc').get();
     entries = snap.docs.map(d=>d.data());
   }catch(err){ console.warn('Could not load initial entries:', err.message); }
+  tallyInitialEntries(entries, byYear);
+  const openingEntry = entries.find(t=> t.type !== 'event'); // newest first, so this is the latest opening balance
+  const eventsThisYear = entries
+    .filter(t=> t.type === 'event' && fundYearOf(t.date) === yKey)
+    .reduce((sum,t)=> sum + (Number(t.amount)||0), 0);
 
-  let openingBalance = 0, openingBalanceDate = null, openingBalanceBy = '';
-  let eventTotal = 0, foundOpening = false;
-  entries.forEach(t=>{
-    if(t.type === 'event'){
-      eventTotal += Number(t.amount)||0;
-    } else if(!foundOpening){
-      openingBalance = Number(t.amount)||0;
-      openingBalanceDate = t.date;
-      openingBalanceBy = t.enteredByName||'';
-      foundOpening = true;
-    }
-  });
-
-  let groupMembers = [];
+  let subscriptionsThisYear = 0;
   try{
     const memSnap = await db.collection('members').where('groupId','==',groupId).get();
-    groupMembers = memSnap.docs.map(d=>({id:d.id, ...d.data()}));
-  }catch(err){ console.warn('Could not load group members:', err.message); }
-
-  let subscriptionTotal = 0;
-  try{
+    const groupMembers = memSnap.docs.map(d=>({id:d.id, ...d.data()}));
     for(const m of groupMembers){
       const paySnap = await db.collection('members').doc(m.id).collection('payments')
         .where('confirmed','==',true).get();
-      paySnap.forEach(p=> subscriptionTotal += Number(p.data().amount)||0);
+      paySnap.forEach(p=>{
+        const pd = p.data(), amt = Number(pd.amount)||0, yr = fundYearOf(pd.date);
+        fundBucket(byYear, yr).collected += amt;
+        if(yr === yKey) subscriptionsThisYear += amt;
+      });
     }
   }catch(err){ console.warn('Could not load subscription payments:', err.message); }
 
-  let groupExpenses = 0;
   try{
     const expSnap = await db.collection('expenses').where('groupId','==',groupId).get();
-    expSnap.forEach(e=> groupExpenses += Number(e.data().amount)||0);
+    expSnap.forEach(e=>{
+      const ed = e.data();
+      fundBucket(byYear, fundYearOf(ed.date)).expenses += Number(ed.amount)||0;
+    });
   }catch(err){ console.warn('Could not load group expenses:', err.message); }
 
-  const balanceInHand = openingBalance + eventTotal + subscriptionTotal - groupExpenses;
-  return { groupName, entries, groupMembers, openingBalance, openingBalanceDate, openingBalanceBy, eventTotal, subscriptionTotal, groupExpenses, balanceInHand };
+  const model = buildFundYearRows(byYear, thisYear);
+  const cur = model.rows.find(r=> r.year === yKey);
+  const openingThisYear = !!openingEntry && fundYearOf(openingEntry.date) === yKey;
+  return {
+    groupName, year: thisYear,
+    broughtForward: cur.brought,
+    openingBalance: openingThisYear ? (Number(openingEntry.amount)||0) : 0,
+    openingBalanceDate: openingThisYear ? openingEntry.date : null,
+    openingBalanceBy: openingThisYear ? (openingEntry.enteredByName||'') : '',
+    eventTotal: eventsThisYear,
+    subscriptionTotal: subscriptionsThisYear,
+    groupExpenses: cur.expenses,
+    balanceInHand: cur.balance
+  };
 }
 
 async function loadInitialEntryForGroup(groupId){
